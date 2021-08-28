@@ -93,6 +93,8 @@ function app:_filter_option(name)
     ,   help        = true
     ,   clean       = true
     ,   menu        = true
+    ,   import      = true
+    ,   export      = true
     }
     return not options[name] and not project.option(name)
 end
@@ -233,19 +235,25 @@ function app:_basic_configs(cache)
         local default = opt[4]
         local kind    = (opt[3] == "k" or type(default) == "boolean") and "boolean" or "string"
 
-        -- get default platform
+        -- get default values
         if name == "plat" then
             default = find_platform()
         elseif name == "arch" then
             _, default = find_platform()
+        elseif name == "mode" then
+            default = project.get("defaultmode")
+            if not default then
+                default = "release"
+            end
         end
 
         -- choice option?
         local values = opt.values
         if values then
             if type(values) == "function" then
-                values = values()
+                values = values(false, {menuconf = true})
             end
+            values = table.wrap(values)
             for idx, value in ipairs(values) do
                 if default == value then
                     default = idx
@@ -324,6 +332,7 @@ function app:_project_configs(cache)
         local values = opt:get("values")
         if values then
             kind = "choice"
+            values = table.wrap(values)
             for idx, value in ipairs(values) do
                 if default == value then
                     default = idx
@@ -358,9 +367,13 @@ end
 -- load configs from options
 function app:load(cache)
 
-    -- load config from cache
-    if cache then
-        cache = config.load()
+    -- merge configuration from the given import file or cache
+    local loaded = false
+    local importfile = option.get("import")
+    if importfile and os.isfile(importfile) then
+        loaded = config.load(importfile)
+    elseif cache then
+        loaded = config.load()
     end
 
     -- clear configs first
@@ -374,7 +387,7 @@ function app:load(cache)
     self:mconfdialog():load(configs)
 
     -- the previous config is only for loading menuconf, so clear config now
-    if cache then
+    if loaded then
         config.clear()
     end
 end

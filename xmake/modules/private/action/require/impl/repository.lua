@@ -19,73 +19,180 @@
 --
 
 -- imports
+import("core.base.option")
+import("core.base.global")
+import("core.project.config")
 import("core.package.repository")
+import("devel.git")
+
+-- get package directory from the locked repository
+function _get_packagedir_from_locked_repo(packagename, locked_repo)
+
+    -- find global repository directory
+    local repo_global
+    for _, repo in ipairs(repositories()) do
+        if locked_repo.url == repo:url() and locked_repo.branch == repo:branch() then
+            repo_global = repo
+            break
+        end
+    end
+    local reponame = hash.uuid(locked_repo.url):gsub("%-", ""):lower() .. ".lock"
+
+    -- get local repodir
+    local repodir_local
+    if os.isdir(locked_repo.url) then
+        repodir_local = locked_repo.url
+    elseif not locked_repo.commit and repo_global then
+        repodir_local = repo_global:directory()
+    else
+        repodir_local = path.join(config.directory(), "repositories", reponame)
+    end
+
+    -- clone repository to local
+    local lastcommit
+    if not os.isdir(repodir_local) then
+        if repo_global then
+            git.clone(repo_global:directory(), {verbose = option.get("verbose"), outputdir = repodir_local})
+            lastcommit = repo_global:commit()
+        elseif global.get("network") ~= "private" then
+            git.clone(locked_repo.url, {verbose = option.get("verbose"), branch = locked_repo.branch, outputdir = repodir_local})
+        else
+            wprint("we cannot lock repository(%s) in private network mode!", locked_repo.url)
+            return
+        end
+    end
+
+    -- lock commit
+    if locked_repo.commit and os.isdir(path.join(repodir_local, ".git")) then
+        lastcommit = lastcommit or try {function()
+            return git.lastcommit({repodir = repodir_local})
+        end}
+        if locked_repo.commit ~= lastcommit then
+            -- try checkout to the given commit
+            local ok = try {function () git.checkout(locked_repo.commit, {verbose = option.get("verbose"), repodir = repodir_local}); return true end}
+            if not ok then
+                if global.get("network") ~= "private" then
+                    -- pull the latest commit
+                    git.pull({verbose = option.get("verbose"), remote = locked_repo.url, branch = locked_repo.branch, repodir = repodir_local})
+                    -- re-checkout to the given commit
+                    ok = try {function () git.checkout(locked_repo.commit, {verbose = option.get("verbose"), repodir = repodir_local}); return true end}
+                else
+                    wprint("we cannot lock repository(%s) in private network mode!", locked_repo.url)
+                    return
+                end
+            end
+        end
+    end
+
+    -- find package directory
+    local foundir
+    if ok then
+        local dir = path.join(repodir_local, "packages", packagename:sub(1, 1), packagename)
+        if os.isdir(dir) and os.isfile(path.join(dir, "xmake.lua")) then
+            local repo = repository.load(reponame, locked_repo.url, locked_repo.branch, false)
+            foundir = {dir, repo}
+            vprint("lock package(%s) in %s from repository(%s)/%s", packagename, dir, locked_repo.url, locked_repo.commit)
+        end
+    end
+    return foundir
+end
 
 -- get all repositories
 function repositories()
-
-    -- get it from cache it
     if _g._REPOSITORIES then
         return _g._REPOSITORIES
     end
-
     -- get all repositories (local first)
     local repos = table.join(repository.repositories(false), repository.repositories(true))
-
-    -- save repositories
     _g._REPOSITORIES = repos
-
-    -- ok
     return repos
 end
 
 -- the remote repositories have been pulled?
 function pulled()
-    for _, repo in ipairs(repositories()) do
-        -- repository not found? or xmake has been re-installed
-        local updatefile = path.join(repo:directory(), "updated")
-        if not os.isdir(repo:directory()) or (os.isfile(updatefile) and os.mtime(os.programfile()) > os.mtime(updatefile)) then
-            return false
+    if global.get("network") ~= "private" then
+        for _, repo in ipairs(repositories()) do
+            -- repository not found? or xmake has been re-installed
+            local updatefile = path.join(repo:directory(), "updated")
+            if not os.isdir(repo:directory()) or (os.isfile(updatefile) and os.mtime(os.programfile()) > os.mtime(updatefile)) then
+                return false
+            end
         end
     end
     return true
 end
 
 -- get package directory from repositories
-function packagedir(packagename, reponame)
+function packagedir(packagename, opt)
 
     -- strip trailng ~tag, e.g. zlib~debug
+    opt = opt or {}
+    packagename = packagename:lower()
     if packagename:find('~', 1, true) then
         packagename = packagename:gsub("~.+$", "")
     end
 
-    -- get it from cache it
-    local packagedirs = _g._PACKAGEDIRS or {}
-    local foundir = packagedirs[packagename]
-    if foundir then
-        return foundir[1], foundir[2]
+    -- get cache key
+    local reponame = opt.name
+    local cachekey = packagename
+    local locked_repo = opt.locked_repo
+    if locked_repo then
+        cachekey = cachekey .. locked_repo.url .. (locked_repo.commit or "") .. (locked_repo.branch or "")
     end
-
-    -- find the package directory from repositories
-    for _, repo in ipairs(repositories()) do
-        local dir = path.join(repo:directory(), "packages", packagename:sub(1, 1):lower(), packagename)
-        if os.isdir(dir) and (not reponame or reponame == repo:name()) then
-            foundir = {dir, repo}
-            break
-        end
-    end
-
-    -- found?
-    if foundir then
-
-        -- save package directory
-        packagedirs[packagename] = foundir
-
-        -- update cache
+    local packagedirs = _g._PACKAGEDIRS
+    if not packagedirs then
+        packagedirs = {}
         _g._PACKAGEDIRS = packagedirs
+    end
 
-        -- ok
-        return foundir[1], foundir[2]
+    -- get the package directory
+    local foundir = packagedirs[cachekey]
+    if not foundir then
+
+        -- find the package directory from the locked repository
+        if locked_repo then
+            local dir, repo = _get_packagedir_from_locked_repo(packagename, locked_repo)
+            if dir and repo then
+                foundir = {dir, repo}
+            end
+        end
+
+        -- find the package directory from repositories
+        if not foundir then
+            for _, repo in ipairs(repositories()) do
+                local dir = path.join(repo:directory(), "packages", packagename:sub(1, 1), packagename)
+                if os.isdir(dir) and os.isfile(path.join(dir, "xmake.lua")) and (not reponame or reponame == repo:name()) then
+                    foundir = {dir, repo}
+                    break
+                end
+            end
+        end
+        foundir = foundir or {}
+        packagedirs[cachekey] = foundir
+    end
+
+    -- save the current commit
+    local dir  = foundir[1]
+    local repo = foundir[2]
+    if repo and not repo:commit() then
+        local lastcommit = try {function()
+            if os.isdir(path.join(repo:directory(), ".git")) then
+                return git.lastcommit({repodir = repo:directory()})
+            end
+        end}
+        repo:commit_set(lastcommit)
+    end
+    return dir, repo
+end
+
+-- get artifacts manifest from repositories
+function artifacts_manifest(packagename, version)
+    packagename = packagename:lower()
+    for _, repo in ipairs(repositories()) do
+        local manifestfile = path.join(repo:directory(), "packages", packagename:sub(1, 1), packagename, version, "manifest.txt")
+        if os.isfile(manifestfile) then
+            return io.load(manifestfile)
+        end
     end
 end
 

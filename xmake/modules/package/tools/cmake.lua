@@ -28,6 +28,11 @@ import("lib.detect.find_file")
 import("lib.detect.find_tool")
 import("package.tools.ninja")
 
+-- get the number of parallel jobs
+function _get_parallel_njobs(opt)
+    return opt.jobs or option.get("jobs") or tostring(math.ceil(os.cpuinfo().ncpu * 3 / 2))
+end
+
 -- translate paths
 function _translate_paths(paths)
     if is_host("windows") then
@@ -71,7 +76,7 @@ end
 
 -- get msvc run environments
 function _get_msvc_runenvs(package)
-    return _get_msvc(package):runenvs()
+    return os.joinenvs(_get_msvc(package):runenvs())
 end
 
 -- get cflags from package deps
@@ -358,6 +363,12 @@ function _get_configs_for_mingw(package, configs, opt)
     envs.CMAKE_OSX_SYSROOT = ""
     -- Avoid cmake to add the flags -search_paths_first and -headerpad_max_install_names on macOS
     envs.HAVE_FLAG_SEARCH_PATHS_FIRST = "0"
+    -- CMAKE_MAKE_PROGRAM may be required for some CMakeLists.txt (libcurl)
+    if is_subhost("windows") then
+        local mingw = assert(package:build_getenv("mingw") or package:build_getenv("sdk"), "mingw not found!")
+        envs.CMAKE_MAKE_PROGRAM = path.join(mingw, "bin", "mingw32-make.exe")
+    end
+
     for k, v in pairs(envs) do
         table.insert(configs, "-D" .. k .. "=" .. v)
     end
@@ -401,6 +412,7 @@ end
 function _get_cmake_generator_for_msvc(package)
     local vsvers =
     {
+        ["2022"] = "17",
         ["2019"] = "16",
         ["2017"] = "15",
         ["2015"] = "14",
@@ -425,6 +437,15 @@ function _get_configs_for_generator(package, configs, opt)
         end
         table.insert(configs, "-G")
         table.insert(configs, cmake_generator)
+        if cmake_generator:find("Ninja", 1, true) then
+            local jobs = _get_parallel_njobs(opt)
+            local linkjobs = opt.linkjobs or option.get("linkjobs")
+            if linkjobs then
+                table.insert(configs, "-DCMAKE_JOB_POOL_COMPILE:STRING=compile")
+                table.insert(configs, "-DCMAKE_JOB_POOL_LINK:STRING=link")
+                table.insert(configs, ("-DCMAKE_JOB_POOLS:STRING=compile=%s;link=%s"):format(jobs, linkjobs))
+            end
+        end
     elseif package:is_plat("mingw") and is_subhost("msys") then
         table.insert(configs, "-G")
         table.insert(configs, "MSYS Makefiles")
@@ -476,13 +497,12 @@ end
 -- get build environments
 function buildenvs(package, opt)
 
-    -- use ninja generator for windows platform? we need bind msvc environments manually
+    -- we need bind msvc environments manually
     -- @see https://github.com/xmake-io/xmake/issues/1057
     opt = opt or {}
     local envs = {}
-    local cmake_generator = opt.cmake_generator
-    if cmake_generator and cmake_generator == "Ninja" and package:is_plat("windows") then
-        table.join2(envs, _get_msvc_runenvs(package))
+    if package:is_plat("windows") then
+        envs = _get_msvc_runenvs(package)
     end
 
     -- add environments for cmake/find_packages
@@ -509,15 +529,20 @@ end
 
 -- do build for msvc
 function _build_for_msvc(package, configs, opt)
+    local jobs = _get_parallel_njobs(opt)
     local slnfile = assert(find_file("*.sln", os.curdir()), "*.sln file not found!")
-    local msbuild = find_tool("msbuild", {envs = _get_msvc_runenvs(package)})
-    os.vrunv(msbuild.program, {slnfile, "-nologo", "-t:Rebuild", "-m", "-p:Configuration=" .. (package:is_debug() and "Debug" or "Release"), "-p:Platform=" .. (package:is_arch("x64") and "x64" or "Win32")}, {envs = runenvs})
+    local runenvs = _get_msvc_runenvs(package)
+    local msbuild = find_tool("msbuild", {envs = runenvs})
+    os.vrunv(msbuild.program, {slnfile, "-nologo", "-t:Rebuild",
+            (jobs ~= nil and format("-m:%d", jobs) or "-m"),
+            "-p:Configuration=" .. (package:is_debug() and "Debug" or "Release"),
+            "-p:Platform=" .. (package:is_arch("x64") and "x64" or "Win32")}, {envs = runenvs})
 end
 
 -- do build for make
 function _build_for_make(package, configs, opt)
-    local njob = opt.jobs or option.get("jobs") or tostring(math.ceil(os.cpuinfo().ncpu * 3 / 2))
-    local argv = {"-j" .. njob}
+    local jobs = _get_parallel_njobs(opt)
+    local argv = {"-j" .. jobs}
     if option.get("verbose") then
         table.insert(argv, "VERBOSE=1")
     end
@@ -546,9 +571,14 @@ end
 
 -- do install for msvc
 function _install_for_msvc(package, configs, opt)
+    local jobs = _get_parallel_njobs(opt)
     local slnfile = assert(find_file("*.sln", os.curdir()), "*.sln file not found!")
-    local msbuild = assert(find_tool("msbuild", {envs = _get_msvc_runenvs(package)}), "msbuild not found!")
-    os.vrunv(msbuild.program, {slnfile, "-nologo", "-t:Rebuild", "-m", "-p:Configuration=" .. (package:is_debug() and "Debug" or "Release"), "-p:Platform=" .. (package:is_arch("x64") and "x64" or "Win32")}, {envs = runenvs})
+    local runenvs = _get_msvc_runenvs(package)
+    local msbuild = assert(find_tool("msbuild", {envs = runenvs}), "msbuild not found!")
+    os.vrunv(msbuild.program, {slnfile, "-nologo", "-t:Rebuild",
+        (jobs ~= nil and format("-m:%d", jobs) or "-m"),
+        "-p:Configuration=" .. (package:is_debug() and "Debug" or "Release"),
+        "-p:Platform=" .. (package:is_arch("x64") and "x64" or "Win32")}, {envs = runenvs})
     local projfile = os.isfile("INSTALL.vcxproj") and "INSTALL.vcxproj" or "INSTALL.vcproj"
     if os.isfile(projfile) then
         os.vrunv(msbuild.program, {projfile, "/property:configuration=" .. (package:is_debug() and "Debug" or "Release")}, {envs = runenvs})
@@ -565,8 +595,8 @@ end
 
 -- do install for make
 function _install_for_make(package, configs, opt)
-    local njob = opt.jobs or option.get("jobs") or tostring(math.ceil(os.cpuinfo().ncpu * 3 / 2))
-    local argv = {"-j" .. njob}
+    local jobs = _get_parallel_njobs(opt)
+    local argv = {"-j" .. jobs}
     if option.get("verbose") then
         table.insert(argv, "VERBOSE=1")
     end

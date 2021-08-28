@@ -115,10 +115,10 @@ function _instance:plat()
         return os.subhost()
     end
     local requireinfo = self:requireinfo()
-    if not plat and requireinfo and requireinfo.plat then
+    if requireinfo and requireinfo.plat then
         return requireinfo.plat
     end
-    return self:get("plat") or package._target_plat()
+    return package.targetplat()
 end
 
 -- get the architecture of package
@@ -145,7 +145,7 @@ function _instance:targetarch()
     if requireinfo and requireinfo.arch then
         return requireinfo.arch
     end
-    return self:get("arch") or package._target_arch()
+    return package.targetarch()
 end
 
 -- get the build mode
@@ -237,6 +237,45 @@ function _instance:url_excludes(url)
     return self:extraconf("urls", url, "excludes")
 end
 
+-- set artifacts info
+function _instance:artifacts_set(artifacts_info)
+    local versions = self:get("versions")
+    if versions then
+        -- we switch to urls of the precompiled artifacts
+        self:urls_set(table.wrap(artifacts_info.urls))
+        versions[self:version_str()] = artifacts_info.sha256
+        self:set("install", function (package)
+            sandbox_module.import("lib.detect.find_path")
+            local rootdir = find_path("manifest.txt", path.join(os.curdir(), "*", "*", "*"))
+            if not rootdir then
+                os.raise("package(%s): manifest.txt not found when installing artifacts!", package:displayname())
+            end
+            os.cp(path.join(rootdir, "*"), package:installdir())
+            local manifest = package:manifest_load()
+            if not manifest then
+                os.raise("package(%s): load manifest.txt failed when installing artifacts!", package:displayname())
+            end
+            if manifest.vars then
+                for k, v in pairs(manifest.vars) do
+                    package:set(k, v)
+                end
+            end
+            if manifest.envs then
+                local envs = self:envs()
+                for k, v in pairs(manifest.envs) do
+                    envs[k] = v
+                end
+            end
+        end)
+        self._IS_PRECOMPILED = true
+    end
+end
+
+-- is this package built?
+function _instance:is_built()
+    return not self._IS_PRECOMPILED
+end
+
 -- get the given dependent package
 function _instance:dep(name)
     local deps = self:deps()
@@ -283,7 +322,6 @@ function _instance:sourcehash(url_alias)
     local versions    = self:get("versions")
     local version_str = self:version_str()
     if versions and version_str then
-
         local sourcehash = nil
         if url_alias then
             sourcehash = versions[url_alias .. ":" ..version_str]
@@ -357,6 +395,11 @@ function _instance:is_library()
     return self:kind() == nil or self:kind() == "library"
 end
 
+-- is header only?
+function _instance:is_headeronly()
+    return self:is_library() and self:extraconf("kind", "library", "headeronly")
+end
+
 -- is top level? user top requires in xmake.lua
 function _instance:is_toplevel()
     local requireinfo = self:requireinfo()
@@ -425,6 +468,10 @@ end
 
 -- is cross-compilation?
 function _instance:is_cross()
+    if self:is_plat("windows", "mingw") and os.host() == "windows" then
+        -- always false on windows host
+        return false
+    end
     if not self:is_plat(os.host()) and not self:is_plat(os.subhost()) then
         return true
     end
@@ -439,7 +486,7 @@ function _instance:filelock()
     if filelock == nil then
         filelock = io.openlock(path.join(self:cachedir(), "package.lock"))
         if not filelock then
-            os.raise("cannot create filelock for package(%s)!", package:name())
+            os.raise("cannot create filelock for package(%s)!", self:name())
         end
         self._FILELOCK = filelock
     end
@@ -475,12 +522,20 @@ end
 
 -- get the installed directory of this package
 function _instance:installdir(...)
-    local name = self:name():lower():gsub("::", "_")
-    local dir = path.join(package.installdir(), name:sub(1, 1):lower(), name)
-    if self:version_str() then
-        dir = path.join(dir, self:version_str())
+    local installdir = self._INSTALLDIR
+    if not installdir then
+        installdir = self:get("installdir")
+        if not installdir then
+            local name = self:name():lower():gsub("::", "_")
+            installdir = path.join(package.installdir(), name:sub(1, 1):lower(), name)
+            if self:version_str() then
+                installdir = path.join(installdir, self:version_str())
+            end
+            installdir = path.join(installdir, self:buildhash())
+        end
+        self._INSTALLDIR = installdir
     end
-    dir = path.join(dir, self:buildhash(), ...)
+    local dir = path.join(installdir, ...)
     if not os.isdir(dir) then
         os.mkdir(dir)
     end
@@ -542,6 +597,16 @@ function _instance:manifest_save()
     manifest.configs     = self:configs()
     manifest.envs        = self:envs()
 
+    -- save enabled link deps
+    if self:linkdeps() then
+        manifest.linkdeps = {}
+        for _, dep in ipairs(self:linkdeps()) do
+            if dep:exists() then
+                table.insert(manifest.linkdeps, dep:name())
+            end
+        end
+    end
+
     -- save variables
     local vars = {}
     local apis = language.apis()
@@ -563,6 +628,7 @@ function _instance:manifest_save()
         manifest.repo.name   = repo:name()
         manifest.repo.url    = repo:url()
         manifest.repo.branch = repo:branch()
+        manifest.repo.commit = repo:commit()
     end
 
     -- save manifest
@@ -790,6 +856,26 @@ function _instance:version_str()
     return self._VERSION_STR
 end
 
+-- set the version, source: branch, tag, version
+function _instance:version_set(version, source)
+
+    -- save the semver version
+    local sv = semver.new(version)
+    if sv then
+        self._VERSION = sv
+    end
+
+    -- save branch and tag
+    if source == "branch" then
+        self._BRANCH = version
+    elseif source == "tag" then
+        self._TAG = version
+    end
+
+    -- save version string
+    self._VERSION_STR = version
+end
+
 -- get branch version
 function _instance:branch()
     return self._BRANCH
@@ -803,27 +889,6 @@ end
 -- is git ref?
 function _instance:gitref()
     return self:branch() or self:tag()
-end
-
--- set the version, source: branches, tags, versions
-function _instance:version_set(version, source)
-
-    -- save the semver version
-    local sv = semver.new(version)
-    if sv then
-        self._VERSION = sv
-    end
-
-    -- save branch and tag
-    if source == "branches" then
-        self._BRANCH = version
-    elseif source == "tags" then
-        self._TAG = version
-    end
-
-    -- save source and version string
-    self._SOURCE      = source
-    self._VERSION_STR = version
 end
 
 -- get the require info
@@ -1037,8 +1102,6 @@ function _instance:script(name, generic)
             end
         end
     end
-
-    -- ok
     return result
 end
 
@@ -1061,10 +1124,11 @@ function _instance:_fetch_tool(opt)
     if fetchinfo == nil then
         self._find_tool = self._find_tool or sandbox_module.import("lib.detect.find_tool", {anonymous = true})
         if opt.system then
-            local fetchnames = {self:name()}
+            local fetchnames = {}
             if not self:is_thirdparty() then
                 table.join2(fetchnames, self:extsources())
             end
+            table.insert(fetchnames, self:name())
             for _, fetchname in ipairs(fetchnames) do
                 fetchinfo = self:find_tool(fetchname, opt)
                 if fetchinfo then
@@ -1117,10 +1181,11 @@ function _instance:_fetch_library(opt)
     end
     if fetchinfo == nil then
         if opt.system then
-            local fetchnames = {self:name()}
+            local fetchnames = {}
             if not self:is_thirdparty() then
                 table.join2(fetchnames, self:extsources())
             end
+            table.insert(fetchnames, self:name())
             for _, fetchname in ipairs(fetchnames) do
                 fetchinfo = self:find_package(fetchname, opt)
                 if fetchinfo then
@@ -1226,7 +1291,7 @@ function _instance:fetch(opt)
     if self:is_binary() then
 
         -- only fetch it from the xmake repository first
-        if not fetchinfo and system ~= true and not self:is_thirdparty() and not self:is_fetchonly() then
+        if not fetchinfo and system ~= true and not self:is_thirdparty() then
             fetchinfo = self:_fetch_tool({require_version = self:version_str(), force = opt.force})
             if fetchinfo then
                 is_system = self._is_system
@@ -1243,7 +1308,7 @@ function _instance:fetch(opt)
     else
 
         -- only fetch it from the xmake repository first
-        if not fetchinfo and system ~= true and not self:is_thirdparty() and not self:is_fetchonly() then
+        if not fetchinfo and system ~= true and not self:is_thirdparty() then
             fetchinfo = self:_fetch_library({require_version = self:version_str(), external = external, force = opt.force})
             if fetchinfo then
                 is_system = self._is_system
@@ -1530,7 +1595,7 @@ end
 
 -- the current platform is belong to the given platforms?
 function package._api_is_plat(interp, ...)
-    local plat = package._target_plat()
+    local plat = package.targetplat()
     for _, v in ipairs(table.join(...)) do
         if v and plat == v then
             return true
@@ -1540,7 +1605,7 @@ end
 
 -- the current platform is belong to the given architectures?
 function package._api_is_arch(interp, ...)
-    local arch = package._target_arch()
+    local arch = package.targetarch()
     for _, v in ipairs(table.join(...)) do
         if v and arch:find("^" .. v:gsub("%-", "%%-") .. "$") then
             return true
@@ -1595,7 +1660,7 @@ function package._project()
 end
 
 -- get global target platform of package
-function package._target_plat()
+function package.targetplat()
     local plat = package._memcache():get("target_plat")
     if plat == nil then
         if not plat and package._project() then
@@ -1613,7 +1678,7 @@ function package._target_plat()
 end
 
 -- get global target architecture of pacakge
-function package._target_arch()
+function package.targetarch()
     local arch = package._memcache():get("target_arch")
     if arch == nil then
         if not arch and package._project() then
@@ -1640,12 +1705,13 @@ function package.apis()
             -- package.set_xxx
             "package.set_urls"
         ,   "package.set_kind"
-        ,   "package.set_plat"
-        ,   "package.set_arch"
+        ,   "package.set_plat" -- deprecated
+        ,   "package.set_arch" -- deprecated
         ,   "package.set_license"
         ,   "package.set_homepage"
         ,   "package.set_description"
         ,   "package.set_parallelize"
+        ,   "package.set_installdir"
             -- package.add_xxx
         ,   "package.add_deps"
         ,   "package.add_urls"

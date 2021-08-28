@@ -73,39 +73,35 @@ function _find_package_from_repo(name, opt)
     local links = {}
     local linkdirs = {}
     local libfiles = {}
-    for _, linkdir in ipairs(vars.linkdirs) do
-        table.insert(linkdirs, path.join(installdir, linkdir))
-    end
     if vars.links then
         table.join2(links, vars.links)
-    end
-    if not vars.linkdirs or not vars.links then
+    else
+        -- we scan links automatically
         local found = false
-        for _, file in ipairs(os.files(path.join(installdir, "lib", "*"))) do
-            if file:endswith(".lib") or file:endswith(".a") then
-                found = true
-                if not vars.linkdirs then
-                    table.insert(linkdirs, path.directory(file))
-                end
-                if not vars.links then
+        for _, libdir in ipairs(vars.linkdirs or "lib") do
+            for _, file in ipairs(os.files(path.join(installdir, libdir, "*"))) do
+                if file:endswith(".lib") or file:endswith(".a") then
+                    found = true
                     table.insert(links, target.linkname(path.filename(file)))
+                    table.insert(libfiles, file)
                 end
             end
-        end
-        if not found then
-            for _, file in ipairs(os.files(path.join(installdir, "lib", "*"))) do
-                if file:endswith(".so") or file:endswith(".dylib") then
-                    if not vars.linkdirs then
-                        table.insert(linkdirs, path.directory(file))
-                    end
-                    if not vars.links then
+            if not found then
+                for _, file in ipairs(os.files(path.join(installdir, "lib", "*"))) do
+                    if file:endswith(".so") or file:match(".+%.so%..+$") or file:endswith(".dylib") then -- maybe symlink to libxxx.so.1
                         table.insert(links, target.linkname(path.filename(file)))
+                        table.insert(libfiles, file)
                     end
                 end
             end
         end
     end
-    if opt.plat == "windows" then
+    if #links > 0 then
+        for _, libdir in ipairs(vars.linkdirs or "lib") do
+            table.insert(linkdirs, path.join(installdir, libdir))
+        end
+    end
+    if opt.plat == "windows" or opt.plat == "mingw" then
         for _, file in ipairs(os.files(path.join(installdir, "lib", "*.dll"))) do
             result.shared = true
             table.insert(libfiles, file)
@@ -145,7 +141,7 @@ function _find_package_from_repo(name, opt)
         result.links = table.unique(result.links)
     end
     if result.libfiles then
-        result.libfiles = table.join(result.libfiles, libfiles)
+        result.libfiles = table.unique(table.join(result.libfiles, libfiles))
     end
 
     -- inherit the other prefix variables

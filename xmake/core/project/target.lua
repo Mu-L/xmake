@@ -1116,11 +1116,15 @@ function _instance:filerules(sourcefile)
     if not key2rules then
         key2rules = {}
         for _, r in pairs(table.wrap(self:rules())) do
-            for _, sourcekind in ipairs(table.wrap(r:get("sourcekinds"))) do
+            -- we can also get sourcekinds from add_rules("xxx", {sourcekinds = "cxx"})
+            local rule_sourcekinds = self:extraconf("rules", r:name(), "sourcekinds") or r:get("sourcekinds")
+            for _, sourcekind in ipairs(table.wrap(rule_sourcekinds)) do
                 key2rules[sourcekind] = key2rules[sourcekind] or {}
                 table.insert(key2rules[sourcekind], r)
             end
-            for _, extension in ipairs(table.wrap(r:get("extensions"))) do
+            -- we can also get extensions from add_rules("xxx", {extensions = ".cpp"})
+            local rule_extensions = self:extraconf("rules", r:name(), "extensions") or r:get("extensions")
+            for _, extension in ipairs(table.wrap(rule_extensions)) do
                 extension = extension:lower()
                 key2rules[extension] = key2rules[extension] or {}
                 table.insert(key2rules[extension], r)
@@ -1130,13 +1134,26 @@ function _instance:filerules(sourcefile)
     end
 
     -- get target rules from the given sourcekind or extension
+    local rules_override = {}
     local filename = path.filename(sourcefile):lower()
     for _, r in ipairs(table.wrap(key2rules[path.extension(filename, 2)] or
-                                  key2rules[path.extension(filename)] or
-                                  key2rules[self:sourcekind_of(filename)])) do
-        table.insert(rules, r)
+                                  key2rules[path.extension(filename)])) do
+        if self:extraconf("rules", r:name(), "override") then
+            table.insert(rules_override, r)
+        else
+            table.insert(rules, r)
+        end
     end
-    return rules
+    for _, r in ipairs(table.wrap(key2rules[self:sourcekind_of(filename)])) do
+        if self:extraconf("rules", r:name(), "override") then
+            table.insert(rules_override, r)
+        else
+            table.insert(rules, r)
+        end
+    end
+
+    -- we will use overrided rules first, e.g. add_rules("xxx", {override = true})
+    return #rules_override > 0 and rules_override or rules
 end
 
 -- get the config info of the given source file
@@ -1231,6 +1248,18 @@ function _instance:sourcefiles()
                     if #self:filerules(file) > 0 then
                         results = os.dirs(file)
                     end
+                end
+
+                -- Even if the current source file does not exist yet, we always add it.
+                -- This is usually used for some rules that automatically generate code files,
+                -- because they ensure that the code files have been generated before compilation.
+                --
+                -- @see https://github.com/xmake-io/xmake/issues/1540
+                --
+                -- e.g. add_files("src/test.c", {always_added = true})
+                --
+                if #results == 0 and self:extraconf("files", file, "always_added") then
+                    results = {file}
                 end
             end
             targetcache:set2("sourcefiles", file, results)
@@ -1545,30 +1574,18 @@ end
 -- e.g. cc cxx mm mxx as ...
 --
 function _instance:sourcekinds()
-
-    -- cached? return it directly
-    if self._SOURCEKINDS then
-        return self._SOURCEKINDS
-    end
-
-    -- make source kinds
-    local sourcekinds = {}
-    for _, sourcefile in pairs(self:sourcefiles()) do
-
-        -- get source kind
-        local sourcekind = self:sourcekind_of(sourcefile)
-        if sourcekind then
-            table.insert(sourcekinds, sourcekind)
+    local sourcekinds = self._SOURCEKINDS
+    if not sourcekinds then
+        sourcekinds = {}
+        for _, sourcefile in pairs(self:sourcefiles()) do
+            local sourcekind = self:sourcekind_of(sourcefile)
+            if sourcekind then
+                table.insert(sourcekinds, sourcekind)
+            end
         end
+        sourcekinds = table.unique(sourcekinds)
+        self._SOURCEKINDS = sourcekinds
     end
-
-    -- remove repeat
-    sourcekinds = table.unique(sourcekinds)
-
-    -- cache it
-    self._SOURCEKINDS = sourcekinds
-
-    -- ok?
     return sourcekinds
 end
 

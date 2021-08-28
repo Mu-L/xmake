@@ -4,13 +4,69 @@
 
 ### New features
 
+* [#1534](https://github.com/xmake-io/xmake/issues/1534): Support to compile Vala lanuage project
+* [#1544](https://github.com/xmake-io/xmake/issues/1544): Add utils.bin2c rule to generate header from binary file
+* [#1547](https://github.com/xmake-io/xmake/issues/1547): Support to run and get output of c/c++ snippets in option
+* [#1567](https://github.com/xmake-io/xmake/issues/1567): Package "lock file" support to freeze dependencies
+* [#1597](https://github.com/xmake-io/xmake/issues/1597): Support to compile *.metal files to generate *.metalib and improve xcode.application rule
+
+### Change
+
+* [#1540](https://github.com/xmake-io/xmake/issues/1540): Better support for compilation of automatically generated code
+* [#1578](https://github.com/xmake-io/xmake/issues/1578): Improve add_repositories to support relative path better
+* [#1582](https://github.com/xmake-io/xmake/issues/1582): Improve installation and os.cp to reserve symlink
+
+### Bugs fixed
+
+* [#1531](https://github.com/xmake-io/xmake/issues/1531): Fix error info when loading targets failed
+
+## v2.5.6
+
+### New features
+
+* [#1483](https://github.com/xmake-io/xmake/issues/1483): Add `os.joinenvs()` and improve package tools envirnoments
+* [#1523](https://github.com/xmake-io/xmake/issues/1523): Add `set_allowedmodes`, `set_allowedplats` and `set_allowedarchs`
+* [#1523](https://github.com/xmake-io/xmake/issues/1523): Add `set_defaultmode`, `set_defaultplat` and `set_defaultarch`
+
+### Change
+
+* Improve vs/vsxmake project generator to support vs2022
+* [#1513](https://github.com/xmake-io/xmake/issues/1513): Improve precompiled binary package compatibility on windows/msvc
+* Improve to find vcpkg root directory on windows
+* Improve to support Qt6
+
+### Bugs fixed
+
+* [#489](https://github.com/xmake-io/xmake-repo/pull/489): Fix run os.execv with too long envirnoment value on windows
+
+## v2.5.5
+
+### New features
+
 * [#1421](https://github.com/xmake-io/xmake/issues/1421): Add prefix, suffix and extension options for target names
 * [#1422](https://github.com/xmake-io/xmake/issues/1422): Support search packages from vcpkg, conan
 * [#1424](https://github.com/xmake-io/xmake/issues/1424): Set binary as default target kind
+* [#1140](https://github.com/xmake-io/xmake/issues/1140): Add a way to ask xmake to try to download dependencies from a certain package manager
+* [#1339](https://github.com/xmake-io/xmake/issues/1339): Improve `xmake package` to generate new local/remote packages
+* Add `appletvos` platform support for AppleTV, `xmake f -p appletvos`
+* [#1437](https://github.com/xmake-io/xmake/issues/1437): Add headeronly library type for package to ignore `vs_runtime`
+* [#1351](https://github.com/xmake-io/xmake/issues/1351): Support export/import current configs
+* [#1454](https://github.com/xmake-io/xmake/issues/1454): Support to download and install precompiled image packages from xmake-mirror
+
+### Change
+
+* [#1425](https://github.com/xmake-io/xmake/issues/1425): Improve tools/meson to load msvc envirnoments
+* [#1442](https://github.com/xmake-io/xmake/issues/1442): Support to clone package resources from git url
+* [#1389](https://github.com/xmake-io/xmake/issues/1389): Support to add toolchain envs to `xrepo env`
+* [#1453](https://github.com/xmake-io/xmake/issues/1453): Support to export protobuf includedirs
+* Support vs2022
 
 ### Bugs fixed
 
 * [#1413](https://github.com/xmake-io/xmake/issues/1413): Fix hangs on fetching packages
+* [#1420](https://github.com/xmake-io/xmake/issues/1420): Fix config and packages cache
+* [#1445](https://github.com/xmake-io/xmake/issues/1445): Fix WDK driver sign error
+* [#1465](https://github.com/xmake-io/xmake/issues/1465): Fix missing link directory
 
 ## v2.5.4
 
@@ -1004,13 +1060,70 @@
 
 ### 新特性
 
+* [#1534](https://github.com/xmake-io/xmake/issues/1534): 新增对 Vala 语言的支持
+* [#1544](https://github.com/xmake-io/xmake/issues/1544): 添加 utils.bin2c 规则去自动从二进制资源文件产生 .h 头文件并引入到 C/C++ 代码中
+* [#1547](https://github.com/xmake-io/xmake/issues/1547): option/snippets 支持运行检测模式，并且可以获取输出
+* [#1567](https://github.com/xmake-io/xmake/issues/1567): 新增 xmake-requires.lock 包依赖锁定支持
+* [#1597](https://github.com/xmake-io/xmake/issues/1597): 支持编译 metal 文件到 metallib，并改进 xcode.application 规则去生成内置的 default.metallib 到 app
+
+### 改进
+
+* [#1540](https://github.com/xmake-io/xmake/issues/1540): 更好更方便地编译自动生成的代码
+* [#1578](https://github.com/xmake-io/xmake/issues/1578): 改进 add_repositories 去更好地支持相对路径
+* [#1582](https://github.com/xmake-io/xmake/issues/1582): 改进安装和 os.cp 支持符号链接
+
+### Bugs 修复
+
+* [#1531](https://github.com/xmake-io/xmake/issues/1531): 修复 targets 加载失败的错误信息提示错误
+
+## v2.5.6
+
+### 新特性
+
+* [#1483](https://github.com/xmake-io/xmake/issues/1483): 添加 `os.joinenvs()` 和改进包工具环境
+* [#1523](https://github.com/xmake-io/xmake/issues/1523): 添加 `set_allowedmodes`, `set_allowedplats` 和 `set_allowedarchs`
+* [#1523](https://github.com/xmake-io/xmake/issues/1523): 添加 `set_defaultmode`, `set_defaultplat` 和 `set_defaultarch`
+
+### 改进
+
+* 改进 vs/vsxmake 工程插件支持 vs2022
+* [#1513](https://github.com/xmake-io/xmake/issues/1513): 改进 windows 预编译包的兼容性问题
+* 改进 vcpkg 包在 windows 上的查找
+* 改进对 Qt6 的支持
+
+### Bugs 修复
+
+* [#489](https://github.com/xmake-io/xmake-repo/pull/489): 修复 run os.execv 带有过长环境变量值出现的一些问题
+
+
+## v2.5.5
+
+### 新特性
+
 * [#1421](https://github.com/xmake-io/xmake/issues/1421): 针对 target 目标，增加目标文件名的前缀，后缀和扩展名设置接口。
 * [#1422](https://github.com/xmake-io/xmake/issues/1422): 支持从 vcpkg, conan 中搜索包
 * [#1424](https://github.com/xmake-io/xmake/issues/1424): 设置 binary 作为默认的 target 目标类型
+* [#1140](https://github.com/xmake-io/xmake/issues/1140): 支持安装时候，手动选择从第三包包管理器安装包
+* [#1339](https://github.com/xmake-io/xmake/issues/1339): 改进 `xmake package` 去产生新的本地包格式，无缝集成 `add_requires`，并且新增生成远程包支持
+* 添加 `appletvos` 编译平台支持, `xmake f -p appletvos`
+* [#1437](https://github.com/xmake-io/xmake/issues/1437): 为包添加 headeronly 库类型去忽略 `vs_runtime`
+* [#1351](https://github.com/xmake-io/xmake/issues/1351): 支持导入导出当前配置
+* [#1454](https://github.com/xmake-io/xmake/issues/1454): 支持下载安装 windows 预编译包
+
+### 改进
+
+* [#1425](https://github.com/xmake-io/xmake/issues/1425): 改进 tools/meson 去加载 msvc 环境，并且增加一些内置配置。
+* [#1442](https://github.com/xmake-io/xmake/issues/1442): 支持从 git url 去下载包资源文件
+* [#1389](https://github.com/xmake-io/xmake/issues/1389): 支持添加工具链环境到 `xrepo env`
+* [#1453](https://github.com/xmake-io/xmake/issues/1453): 支持 protobuf 规则导出头文件搜索目录
+* 新增对 vs2022 的支持
 
 ### Bugs 修复
 
 * [#1413](https://github.com/xmake-io/xmake/issues/1413): 修复查找包过程中出现的挂起卡死问题
+* [#1420](https://github.com/xmake-io/xmake/issues/1420): 修复包检测和配置缓存
+* [#1445](https://github.com/xmake-io/xmake/issues/1445): 修复 WDK 驱动签名错误
+* [#1465](https://github.com/xmake-io/xmake/issues/1465): 修复缺失的链接目录
 
 ## v2.5.4
 
@@ -1995,3 +2108,4 @@
 * 修复set_installscript接口的一些bug
 * 修复在windows x86_64下，安装失败的问题
 * 修复相对路径的一些bug
+

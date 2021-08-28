@@ -47,6 +47,9 @@ function main (target, opt)
         local msvc = toolchain.load("msvc", {plat = target:plat(), arch = target:arch()})
         local dumpbin = assert(find_tool("dumpbin", {envs = msvc:runenvs()}), "dumpbin not found!")
 
+        -- export c++ class?
+        local export_classes = target:extraconf("rules", "utils.symbols.export_all", "export_classes")
+
         -- get all symbols from object files
         local allsymbols = hashset.new()
         for _, objectfile in ipairs(target:objectfiles()) do
@@ -58,11 +61,19 @@ function main (target, opt)
                         local symbol = line:match(".*External%s+| (.*)")
                         if symbol then
                             symbol = symbol:split('%s')[1]
-                            if not symbol:startswith("__") and not symbol:startswith("?") then
+                            if not symbol:startswith("__") then
                                 if target:is_arch("x86") and symbol:startswith("_") then
                                     symbol = symbol:sub(2)
                                 end
-                                allsymbols:insert(symbol)
+                                if export_classes or not symbol:startswith("?") then
+                                    if export_classes then
+                                        if not symbol:startswith("??_G") and not symbol:startswith("??_E") then
+                                            allsymbols:insert(symbol)
+                                        end
+                                    else
+                                        allsymbols:insert(symbol)
+                                    end
+                                end
                             end
                         end
                     end

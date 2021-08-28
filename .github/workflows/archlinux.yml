@@ -12,8 +12,11 @@ jobs:
     container: archlinux:latest
     runs-on: ubuntu-latest
 
+    concurrency:
+        group: ${{ github.head_ref }}-Archlinux
+        cancel-in-progress: true
     steps:
-      - name: prepare build tools
+      - name: Prepare build tools
         run: |
           pacman -Sy --noconfirm --needed git base-devel perl make unzip
       - uses: actions/checkout@v2
@@ -26,8 +29,7 @@ jobs:
         with:
           xmake-version: local#../xmake-source
 
-        # tests
-      - name: tests
+      - name: Tests
         env:
           XMAKE_ROOT: y
         run: |

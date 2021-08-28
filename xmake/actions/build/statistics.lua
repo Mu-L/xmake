@@ -88,7 +88,7 @@ function post()
     try
     {
         function ()
-            process.openv("xmake", argv, {stdout = path.join(os.tmpdir(), projectname .. ".stats.log")}, {detach = true}):close()
+            process.openv("xmake", argv, {stdout = path.join(os.tmpdir(), projectname .. ".stats.log"), detach = true}):close()
         end
     }
 
@@ -111,7 +111,7 @@ function main()
     platform.load(config.plat())
 
     -- enter the environments of git
-    packagenv.enter("git")
+    local oldenvs = packagenv.enter("git")
 
     -- get the project directory name
     local projectname = path.basename(os.projectdir())
@@ -139,5 +139,5 @@ function main()
     end
 
     -- leave the environments of git
-    packagenv.leave("git")
+    os.setenvs(oldenvs)
 end

@@ -22,12 +22,16 @@
 import("core.base.semver")
 import("core.base.option")
 import("core.base.global")
+import("core.base.hashset")
 import("private.utils.progress")
 import("core.cache.memcache")
 import("core.project.project")
+import("core.project.config")
+import("core.tool.toolchain")
 import("core.package.package", {alias = "core_package"})
 import("devel.git")
 import("private.action.require.impl.repository")
+import("private.action.require.impl.utils.requirekey", {alias = "_get_requirekey"})
 
 -- get memcache
 function _memcache()
@@ -78,6 +82,7 @@ end
 --   true: only get system package
 --   false: only get remote packages
 --
+-- {build = true}: always build packages, we do not use the precompiled artifacts
 --
 function _parse_require(require_str)
 
@@ -147,8 +152,13 @@ function _load_require(require_str, requires_extra, parentinfo)
 
     -- require packge in the current host platform
     if require_extra.host then
-        require_extra.plat = os.host()
-        require_extra.arch = os.arch()
+        if is_subhost(core_package.targetplat()) and os.subarch() == core_package.targetarch() then
+            -- we need pass plat/arch to avoid repeat installation
+            -- @see https://github.com/xmake-io/xmake/issues/1579
+        else
+            require_extra.plat = os.subhost()
+            require_extra.arch = os.subarch()
+        end
     end
 
     -- init required item
@@ -173,7 +183,8 @@ function _load_require(require_str, requires_extra, parentinfo)
         optional         = parentinfo.optional or require_extra.optional, -- default: false, inherit parentinfo.optional
         verify           = require_extra.verify,    -- default: true, we can set false to ignore sha256sum and select any version
         external         = require_extra.external,  -- default: true, we use sysincludedirs/-isystem instead of -I/xxx
-        private          = require_extra.private    -- default: false, private package, only for installation, do not export any links/includes and environments
+        private          = require_extra.private,   -- default: false, private package, only for installation, do not export any links/includes and environments
+        build            = require_extra.build      -- default: false, always build packages, we do not use the precompiled artifacts
     }
     return required.packagename, required.requireinfo
 end
@@ -189,10 +200,38 @@ function _load_package_from_project(packagename)
 end
 
 -- load package package from repositories
-function _load_package_from_repository(packagename, reponame)
-    local packagedir, repo = repository.packagedir(packagename, reponame)
+function _load_package_from_repository(packagename, opt)
+    local packagedir, repo = repository.packagedir(packagename, opt)
     if packagedir then
         return core_package.load_from_repository(packagename, repo, packagedir)
+    end
+end
+
+-- has locked requires?
+function _has_locked_requires(opt)
+    opt = opt or {}
+    if not option.get("upgrade") or opt.force then
+        return project.policy("package.requires_lock") and os.isfile(project.requireslock())
+    end
+end
+
+-- get locked requires
+function _get_locked_requires(requirekey, opt)
+    opt = opt or {}
+    local requireslock = _memcache():get("requireslock")
+    if requireslock == nil or opt.force then
+        if _has_locked_requires(opt) then
+            requireslock = io.load(project.requireslock())
+        end
+        _memcache():set("requireslock", requireslock or false)
+    end
+    if requireslock then
+        local plat = config.plat() or os.subhost()
+        local arch = config.arch() or so.subarch()
+        local key = plat .. "|" .. arch
+        if requireslock[key] then
+            return requireslock[key][requirekey], requireslock.__meta__.version
+        end
     end
 end
 
@@ -219,19 +258,42 @@ end
 
 -- add some builtin configurations to package
 function _add_package_configurations(package)
-    package:add("configs", "debug", {builtin = true, description = "Enable debug symbols.", default = false, type = "boolean"})
-    package:add("configs", "shared", {builtin = true, description = "Enable shared library.", default = false, type = "boolean"})
+    -- we can define configs to override it and it's default value in package()
+    if package:extraconf("configs", "debug", "default") == nil then
+        package:add("configs", "debug", {builtin = true, description = "Enable debug symbols.", default = false, type = "boolean"})
+    end
+    if package:extraconf("configs", "shared", "default") == nil then
+        package:add("configs", "shared", {builtin = true, description = "Build shared library.", default = false, type = "boolean"})
+    end
+    if package:extraconf("configs", "pic", "default") == nil then
+        package:add("configs", "pic", {builtin = true, description = "Enable the position independent code.", default = true, type = "boolean"})
+    end
+    if package:extraconf("configs", "vs_runtime", "default") == nil then
+        package:add("configs", "vs_runtime", {builtin = true, description = "Set vs compiler runtime.", values = {"MT", "MTd", "MD", "MDd"}})
+    end
+    if package:extraconf("configs", "toolchains", "default") == nil then
+        package:add("configs", "toolchains", {builtin = true, description = "Set package toolchains only for cross-compilation."})
+    end
     package:add("configs", "cflags", {builtin = true, description = "Set the C compiler flags."})
     package:add("configs", "cxflags", {builtin = true, description = "Set the C/C++ compiler flags."})
     package:add("configs", "cxxflags", {builtin = true, description = "Set the C++ compiler flags."})
     package:add("configs", "asflags", {builtin = true, description = "Set the assembler flags."})
-    package:add("configs", "pic", {builtin = true, description = "Enable the position independent code.", default = true, type = "boolean"})
-    package:add("configs", "vs_runtime", {builtin = true, description = "Set vs compiler runtime.", values = {"MT", "MTd", "MD", "MDd"}})
-    package:add("configs", "toolchains", {builtin = true, description = "Set package toolchains only for cross-compilation."})
 end
 
 -- select package version
-function _select_package_version(package, requireinfo)
+function _select_package_version(package, requireinfo, locked_requireinfo)
+
+    -- get it from the locked requireinfo
+    if locked_requireinfo then
+        local version = locked_requireinfo.version
+        local source = "version"
+        if locked_requireinfo.branch then
+            source = "branch"
+        elseif locked_requireinfo.tag then
+            source = "tag"
+        end
+        return version, source
+    end
 
     -- exists urls? otherwise be phony package (only as package group)
     if #package:urls() > 0 then
@@ -255,13 +317,15 @@ function _select_package_version(package, requireinfo)
             -- @see https://github.com/xmake-io/xmake/issues/930
             -- https://github.com/xmake-io/xmake/issues/1009
             version = require_version
-            source = "versions"
-        elseif #package:versions() > 0 and (require_version == "latest" or require_version:find('.', 1, true)) then -- select version?
-            version, source = semver.select(require_version, package:versions())
-        elseif has_giturl then -- select branch?
-            version, source = require_version ~= "latest" and require_version or "master", "branches"
-        else
-            raise("package(%s %s): not found!", package:displayname(), require_version)
+            source = "version"
+        elseif #package:versions() > 0 then -- select version?
+            version, source = try { function () return semver.select(require_version, package:versions()) end }
+        end
+        if not version and has_giturl and not require_version:find('.', 1, true) then -- select branch?
+            version, source = require_version ~= "latest" and require_version or "master", "branch"
+        end
+        if not version then
+            raise("package(%s): version(%s) not found!", package:name(), require_version)
         end
         return version, source
     end
@@ -352,19 +416,29 @@ function _init_requireinfo(requireinfo, package, opt)
     requireinfo.configs = requireinfo.configs or {}
     if opt.is_toplevel then
         requireinfo.is_toplevel = true
-        if package:is_cross() and package:is_library() then
-            -- TODO get extra configs of toolchain
-            requireinfo.configs.toolchains = requireinfo.configs.toolchains or project.get("target.toolchains") or get_config("toolchain")
+        if not package:is_headeronly() then
+            if package:is_cross() and package:is_library() then
+                requireinfo.configs.toolchains = requireinfo.configs.toolchains or project.get("target.toolchains") or get_config("toolchain")
+            end
+            requireinfo.configs.vs_runtime = requireinfo.configs.vs_runtime or project.get("target.runtimes") or get_config("vs_runtime")
         end
-        requireinfo.configs.vs_runtime = requireinfo.configs.vs_runtime or project.get("target.runtimes") or get_config("vs_runtime")
     end
 end
 
--- set default requireinfo
-function _set_requireinfo_default(requireinfo, package)
+-- finish requireinfo
+function _finish_requireinfo(requireinfo, package)
     requireinfo.configs = requireinfo.configs or {}
-    if requireinfo.configs.vs_runtime == nil and package:is_plat("windows") then
-        requireinfo.configs.vs_runtime = "MT"
+    if not package:is_headeronly() then
+        if requireinfo.configs.vs_runtime == nil and package:is_plat("windows") then
+            requireinfo.configs.vs_runtime = "MT"
+        end
+    end
+    -- we need ensure readonly configs
+    for _, name in ipairs(table.keys(requireinfo.configs)) do
+        if package:extraconf("configs", name, "readonly") then
+            -- package:config() will use default value after loading package
+            requireinfo.configs[name] = nil
+        end
     end
 end
 
@@ -450,26 +524,17 @@ end
 
 -- get package key
 function _get_packagekey(packagename, requireinfo, version)
-    local key = packagename .. "/" .. (version or requireinfo.version)
-    if requireinfo.plat then
-        key = key .. "/" .. requireinfo.plat
-    end
-    if requireinfo.arch then
-        key = key .. "/" .. requireinfo.arch
-    end
-    if requireinfo.label then
-        key = key .. "/" .. requireinfo.label
-    end
-    local configs = requireinfo.configs
-    if configs then
-        local configs_order = {}
-        for k, v in pairs(configs) do
-            table.insert(configs_order, k .. "=" .. tostring(v))
-        end
-        table.sort(configs_order)
-        key = key .. ":" .. string.serialize(configs_order, true)
-    end
-    return key
+    return _get_requirekey(requireinfo, {name = packagename,
+                                         plat = requireinfo.plat,
+                                         arch = requireinfo.arch,
+                                         version = version or requireinfo.version})
+end
+
+-- get locked package key
+function _get_packagelock_key(requireinfo)
+    local requirestr  = requireinfo.originstr
+    local key         = _get_requirekey(requireinfo, {hash = true})
+    return string.format("%s#%s", requirestr, key)
 end
 
 -- inherit some builtin configs of parent package if these config values are not default value
@@ -502,6 +567,74 @@ function _inherit_parent_configs(requireinfo, package, parentinfo)
     end
 end
 
+-- select artifacts for msvc
+function _select_artifacts_for_msvc(package, artifacts_manifest)
+    local msvc
+    for _, instance in ipairs(package:toolchains()) do
+        if instance:name() == "msvc" then
+            msvc = instance
+            break
+        end
+    end
+    if not msvc then
+        msvc = toolchain.load("msvc", {plat = package:plat(), arch = package:arch()})
+    end
+    local vcvars = msvc:config("vcvars")
+    if vcvars then
+        local vs_toolset = vcvars.VCToolsVersion
+        if vs_toolset and semver.is_valid(vs_toolset) then
+            local artifacts_infos = {}
+            for key, artifacts_info in pairs(artifacts_manifest) do
+                if key:startswith(package:plat() .. "-" .. package:arch() .. "-vc") and key:endswith("-" .. package:buildhash()) then
+                    table.insert(artifacts_infos, artifacts_info)
+                end
+            end
+            -- we sort them to select a newest toolset to get better optimzed performance
+            table.sort(artifacts_infos, function (a, b)
+                if a.toolset and b.toolset then
+                    return semver.compare(a.toolset, b.toolset) > 0
+                else
+                    return false
+                end
+            end)
+            if package:config("shared") or package:is_binary() then
+                -- executable programs and dynamic libraries only need to select the latest toolset
+                return artifacts_infos[1]
+            else
+                -- static libraries need to consider toolset compatibility
+                for _, artifacts_info in ipairs(artifacts_infos) do
+                    -- toolset is backwards compatible
+                    --
+                    -- @see https://github.com/xmake-io/xmake/issues/1513
+                    -- https://docs.microsoft.com/en-us/cpp/porting/binary-compat-2015-2017?view=msvc-160
+                    if artifacts_info.toolset and semver.compare(vs_toolset, artifacts_info.toolset) >= 0 then
+                        return artifacts_info
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- select artifacts for generic
+function _select_artifacts_for_generic(package, artifacts_manifest)
+    local buildid = package:plat() .. "-" .. package:arch() .. "-" .. package:buildhash()
+    return artifacts_manifest[buildid]
+end
+
+-- select to use precompiled artifacts?
+function _select_artifacts(package, artifacts_manifest)
+    local artifacts_info
+    if package:is_plat("windows") then -- for msvc
+        artifacts_info = _select_artifacts_for_msvc(package, artifacts_manifest)
+    else
+        artifacts_info = _select_artifacts_for_generic(package, artifacts_manifest)
+    end
+    if artifacts_info then
+        package:artifacts_set(artifacts_info)
+    end
+end
+
 -- load required packages
 function _load_package(packagename, requireinfo, opt)
 
@@ -515,6 +648,13 @@ function _load_package(packagename, requireinfo, opt)
         requireinfo.label = splitinfo[2]
     end
 
+    -- save requirekey
+    local requirekey = _get_packagelock_key(requireinfo)
+    requireinfo.requirekey = requirekey
+
+    -- get locked requireinfo
+    local locked_requireinfo = get_locked_requireinfo(requireinfo)
+
     -- load package from project first
     local package
     if os.isfile(os.projectfile()) then
@@ -522,8 +662,13 @@ function _load_package(packagename, requireinfo, opt)
     end
 
     -- load package from repositories
+    local from_repo = false
     if not package then
-        package = _load_package_from_repository(packagename, requireinfo.reponame)
+        package = _load_package_from_repository(packagename, {
+            name = requireinfo.reponame, locked_repo = locked_requireinfo and locked_requireinfo.repo})
+        if package then
+            from_repo = true
+        end
     end
 
     -- load package from system
@@ -549,11 +694,11 @@ function _load_package(packagename, requireinfo, opt)
         _inherit_parent_configs(requireinfo, package, opt.parentinfo)
     end
 
-    -- set default requireinfo
-    _set_requireinfo_default(requireinfo, package)
+    -- finish requireinfo
+    _finish_requireinfo(requireinfo, package)
 
     -- select package version
-    local version, source = _select_package_version(package, requireinfo)
+    local version, source = _select_package_version(package, requireinfo, locked_requireinfo)
     if version then
         package:version_set(version, source)
     end
@@ -564,6 +709,10 @@ function _load_package(packagename, requireinfo, opt)
     -- get package from cache first
     local package_cached = _memcache():get2("packages", packagekey)
     if package_cached then
+        -- since toplevel is not part of packagekey, we need to ensure it's part of the cached package table too
+        if requireinfo.is_toplevel and not package_cached:is_toplevel() then
+            package_cached:requireinfo().is_toplevel = true
+        end
         return package_cached
     end
 
@@ -593,6 +742,15 @@ function _load_package(packagename, requireinfo, opt)
 
     -- check package configurations
     _check_package_configurations(package)
+
+    -- save artifacts info, we need add it at last before buildhash need depend on package configurations
+    -- it will switch to install precompiled binary package from xmake-mirror/build-artifacts
+    if from_repo and not option.get("build") and not requireinfo.build then
+        local artifacts_manifest = repository.artifacts_manifest(packagename, version)
+        if artifacts_manifest then
+            _select_artifacts(package, artifacts_manifest)
+        end
+    end
 
     -- do load
     local on_load = package:script("load")
@@ -702,6 +860,15 @@ function _check_package_depconflicts(package)
     end
 end
 
+-- must depend on the given package?
+function _must_depend_on(package, dep)
+    local manifest = package:manifest_load()
+    if manifest and manifest.linkdeps then
+        local linkdeps = hashset.from(manifest.linkdeps)
+        return linkdeps:has(dep:name())
+    end
+end
+
 -- the cache directory
 function cachedir()
     return path.join(global.directory(), "cache", "packages")
@@ -725,6 +892,20 @@ function should_install(package)
         -- if all the packages that depend on it already exist, then there is no need to install it
         for _, parent in pairs(package:parents()) do
             if should_install(parent) and not parent:exists() then
+                return true
+            end
+
+            -- if the existing parent package is already using it,
+            -- then even if it is an optional package, you must make sure to install it
+            --
+            -- @see https://github.com/xmake-io/xmake/issues/1460
+            --
+            if parent:exists() and not option.get("force") and _must_depend_on(parent, package) then
+                -- mark this package as non-optional because parent package need it
+                local requireinfo = package:requireinfo()
+                if requireinfo.optional then
+                    requireinfo.optional = nil
+                end
                 return true
             end
         end
@@ -768,6 +949,19 @@ function get_configs_str(package)
         configs_str = configs_str:sub(1, limitwidth) .. " ..)"
     end
     return configs_str
+end
+
+-- get locked requireinfo
+function get_locked_requireinfo(requireinfo, opt)
+    local requirekey = requireinfo.requirekey
+    local locked_requireinfo, requireslock_version
+    if _has_locked_requires(opt) and requirekey then
+        locked_requireinfo, requireslock_version = _get_locked_requires(requirekey, opt)
+        if requireslock_version and semver.compare(project.requireslock_version(), requireslock_version) < 0 then
+            locked_requireinfo = nil
+        end
+    end
+    return locked_requireinfo, requireslock_version
 end
 
 -- load requires

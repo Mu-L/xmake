@@ -23,6 +23,8 @@ import("core.base.option")
 import("core.base.task")
 import("core.base.hashset")
 import("core.project.config")
+import("core.project.project")
+import("core.tool.toolchain")
 import("lib.detect.find_tool")
 import("private.action.require.impl.package")
 import("private.action.require.impl.utils.get_requires")
@@ -68,7 +70,7 @@ function menu_options()
     local function show_options()
 
         -- show usage
-        cprint("${bright}Usage: $${clear cyan}xrepo env [options] [packages] [program] [arguments]")
+        cprint("${bright}Usage: $${clear cyan}xrepo env [options] [program] [arguments]")
 
         -- show description
         print("")
@@ -154,8 +156,26 @@ function _enter_project()
     config.load()
 end
 
+-- remove repeat environment values
+function _remove_repeat_pathenv(value)
+    if value then
+        local itemset = {}
+        local results = {}
+        for _, item in ipairs(path.splitenv(value)) do
+            if not itemset[item] then
+                table.insert(results, item)
+                itemset[item] = true
+            end
+        end
+        if #results > 0 then
+            value = path.joinenv(results)
+        end
+    end
+    return value
+end
+
 -- add values to environment variable
-function _package_addenv(envs, name, ...)
+function _addenvs(envs, name, ...)
     local values = {...}
     if #values > 0 then
         local oldenv = envs[name]
@@ -182,13 +202,13 @@ function _package_addenvs(envs, instance)
         if name == "PATH" or name == "LD_LIBRARY_PATH" or name == "DYLD_LIBRARY_PATH" then
             for _, value in ipairs(values) do
                 if path.is_absolute(value) then
-                    _package_addenv(envs, name, value)
+                    _addenvs(envs, name, value)
                 else
-                    _package_addenv(envs, name, path.join(installdir, value))
+                    _addenvs(envs, name, path.join(installdir, value))
                 end
             end
         else
-            _package_addenv(envs, name, unpack(table.wrap(values)))
+            _addenvs(envs, name, unpack(table.wrap(values)))
         end
     end
 
@@ -196,17 +216,30 @@ function _package_addenvs(envs, instance)
     if instance:is_library() then
         local pkgconfig = path.join(installdir, "lib", "pkgconfig")
         if os.isdir(pkgconfig) then
-            _package_addenv(envs, "PKG_CONFIG_PATH", pkgconfig)
+            _addenvs(envs, "PKG_CONFIG_PATH", pkgconfig)
         end
         pkgconfig = path.join(installdir, "share", "pkgconfig")
         if os.isdir(pkgconfig) then
-            _package_addenv(envs, "PKG_CONFIG_PATH", pkgconfig)
+            _addenvs(envs, "PKG_CONFIG_PATH", pkgconfig)
         end
         local aclocal = path.join(installdir, "share", "aclocal")
         if os.isdir(aclocal) then
-            _package_addenv(envs, "ACLOCAL_PATH", aclocal)
+            _addenvs(envs, "ACLOCAL_PATH", aclocal)
         end
-        _package_addenv(envs, "CMAKE_PREFIX_PATH", installdir)
+        _addenvs(envs, "CMAKE_PREFIX_PATH", installdir)
+    end
+end
+
+-- add toolcjhain environments
+function _toolchain_addenvs(envs)
+    for _, name in ipairs(project.get("target.toolchains")) do
+        local toolchain_opt = project.extraconf("target.toolchains", name)
+        local toolchain_inst = toolchain.load(name, toolchain_opt)
+        if toolchain_inst then
+            for k, v in pairs(toolchain_inst:runenvs()) do
+                _addenvs(envs, k, unpack(path.splitenv(v)))
+            end
+        end
     end
 end
 
@@ -215,6 +248,7 @@ function _package_getenvs()
     local envs = os.getenvs()
     if os.isfile(os.projectfile()) and not option.get("packages") then
         task.run("config", {target = "all"}, {disable_dump = true})
+        _toolchain_addenvs(envs)
         local requires, requires_extra = get_requires()
         for _, instance in ipairs(package.load_packages(requires, {requires_extra = requires_extra})) do
             _package_addenvs(envs, instance)
@@ -230,7 +264,11 @@ function _package_getenvs()
             end
         end
     end
-    return envs
+    local results = {}
+    for k, v in pairs(envs) do
+        results[k] = _remove_repeat_pathenv(v)
+    end
+    return results
 end
 
 -- get environment setting script
@@ -247,15 +285,29 @@ function _get_env_script(envs, shell, del)
     elseif shell == "cmd" then
         prefix = "@set \""
         suffix = "\""
+    elseif shell:endswith("sh") then
+        if del then
+            prefix = "unset "
+            connector = ""
+        else
+            prefix = "export "
+            connector = "='"
+            suffix = "'"
+        end
     end
+    local exceptions = hashset.of("_", "PS1", "PROMPT")
     local ret = ""
     if del then
         for name, _ in pairs(envs) do
-            ret = ret .. prefix .. name .. connector .. default .. suffix .. "\n"
+            if not exceptions:has(name) then
+                ret = ret .. prefix .. name .. connector .. default .. suffix .. "\n"
+            end
         end
     else
         for name, value in pairs(envs) do
-            ret = ret .. prefix .. name .. connector .. value .. suffix .. "\n"
+            if not exceptions:has(name) then
+                ret = ret .. prefix .. name .. connector .. value .. suffix .. "\n"
+            end
         end
     end
     return ret
@@ -265,7 +317,7 @@ end
 function info(key)
     if key == "prompt" then
         assert(os.isfile(os.projectfile()), "xmake.lua not found!")
-        print("[%s]", path.filename(os.projectdir()))
+        io.write("[" .. path.filename(os.projectdir()) .. "]")
     elseif key == "envfile" then
         print(os.tmpfile())
     elseif key == "config" then

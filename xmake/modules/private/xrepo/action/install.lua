@@ -40,8 +40,9 @@ function menu_options()
                                        "e.g.",
                                        "    - xrepo install -f \"vs_runtime=MD\" zlib",
                                        "    - xrepo install -f \"regex=true,thread=true\" boost"},
-        {'j', "jobs",          "kv", tostring(math.ceil(os.cpuinfo().ncpu * 3 / 2)),
-                                          "Specifies the number of jobs to build simultaneously."},
+        {'j', "jobs",       "kv", tostring(math.ceil(os.cpuinfo().ncpu * 3 / 2)),
+                                          "Set the number of parallel compilation jobs."},
+        {nil, "linkjobs",   "kv", nil,    "Set the number of parallel link jobs."},
         {nil, "includes",      "kv", nil, "Includes extra lua configuration files.",
                                        "e.g.",
                                        "    -- xrepo install -p cross --toolchain=mytool --includes='toolchain1.lua" .. path.envsep() .. "toolchain2.lua'"},
@@ -66,6 +67,7 @@ function menu_options()
         {category = "Other Configuration"                                    },
         {nil, "force",         "k",  nil, "Force to reinstall all package dependencies."},
         {nil, "shallow",       "k",  nil, "Does not install dependent packages."},
+        {nil, "build",         "k",  nil, "Always build and install packages from source."},
         {},
         {nil, "packages",      "vs", nil, "The packages list.",
                                        "e.g.",
@@ -187,11 +189,17 @@ function _install_packages(packages)
         table.insert(require_argv, "-j")
         table.insert(require_argv, option.get("jobs"))
     end
+    if option.get("linkjobs") then
+        table.insert(require_argv, "--linkjobs=" .. option.get("linkjobs"))
+    end
     if option.get("force") then
         table.insert(require_argv, "--force")
     end
     if option.get("shallow") then
         table.insert(require_argv, "--shallow")
+    end
+    if option.get("build") then
+        table.insert(require_argv, "--build")
     end
     local extra = {system = false}
     if mode == "debug" then

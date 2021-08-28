@@ -35,7 +35,8 @@ local vcvars = {"path",
                 "WindowsSDKVersion",
                 "WindowsSdkBinPath",
                 "UniversalCRTSdkDir",
-                "UCRTVersion"}
+                "UCRTVersion",
+                "VCToolsVersion"}
 
 -- load vcvarsall environment variables
 function _load_vcvarsall(vcvarsall, vsver, arch, opt)
@@ -150,7 +151,8 @@ function main(opt)
     -- init vsvers
     local vsvers =
     {
-        ["16.0"] = "2019"
+        ["17.0"] = "2022"
+    ,   ["16.0"] = "2019"
     ,   ["15.0"] = "2017"
     ,   ["14.0"] = "2015"
     ,   ["12.0"] = "2013"
@@ -253,7 +255,7 @@ function main(opt)
         local vswhere_VCAuxiliaryBuildDir = nil
         if (tonumber(version) >= 15) and vswhere then
             local vswhere_vrange = format("%s,%s)", version, (version + 1))
-            local result = os.iorunv(vswhere.program, {"-property", "installationpath", "-version", vswhere_vrange})
+            local result = os.iorunv(vswhere.program, {"-prerelease", "-property", "installationpath", "-version", vswhere_vrange})
             if result then
                 vswhere_VCAuxiliaryBuildDir = path.join(result:trim(), "VC", "Auxiliary", "Build")
             end

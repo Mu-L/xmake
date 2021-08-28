@@ -23,6 +23,81 @@ import("core.base.option")
 import("lib.detect.find_tool")
 import("package.manager.pkgconfig.find_package", {alias = "find_package_from_pkgconfig"})
 
+-- get result from list of file inside pacman package
+function _find_package_from_list(list, name, pacman, opt)
+
+    -- mingw + pacman = cygpath available
+    local cygpath = nil
+    if is_subhost("msys") and opt.plat == "mingw" then
+        cygpath = find_tool("cygpath")
+        if not cygpath then
+            return
+        end
+    end
+
+    -- iterate over each file path inside the pacman package
+    local result = {includedirs = {}, linkdirs = {}, links = {}}
+    for _, line in ipairs(list:split('\n', {plain = true})) do -- on msys cygpath should be used to convert local path to windows path
+        line = line:trim():split('%s+')[2]
+        if line:find("/include/", 1, true) and (line:endswith(".h") or line:endswith(".hpp")) then
+            local hpath = line
+            if is_subhost("msys") and opt.plat == "mingw" then
+                hpath = os.iorunv(cygpath.program, {"--windows", line})
+
+                if opt.arch == "x86_64" then
+                    local basehpath = os.iorunv(cygpath.program, {"--windows", "/mingw64/include"})
+                    table.insert(result.includedirs, basehpath)
+                else
+                    local basehpath = os.iorunv(cygpath.program, {"--windows", "/mingw32/include"})
+                    table.insert(result.includedirs, basehpath)
+                end
+            end
+            table.insert(result.includedirs, path.directory(hpath))
+        -- remove lib and .a, .dll.a and .so to have the links
+        elseif line:endswith(".dll.a") then -- only for mingw
+            local apath = os.iorunv(cygpath.program, {"--windows", line})
+            table.insert(result.linkdirs, path.directory(apath))
+            apath = path.filename(apath)
+            if apath:startswith("lib") then
+                apath = apath:sub(4, apath:len())
+            end
+            table.insert(result.links, apath:sub(1, apath:len() - 7))
+        elseif line:endswith(".so") then
+            local apath = line
+            table.insert(result.linkdirs, path.directory(apath))
+            apath = path.filename(apath)
+            if apath:startswith("lib") then
+                apath = apath:sub(4, apath:len())
+            end
+            table.insert(result.links, apath:sub(1, apath:len() - 4))
+        elseif line:endswith(".a") then
+            local apath = line
+            if is_subhost("msys") and opt.plat == "mingw" then
+                apath = os.iorunv(cygpath.program, {"--windows", line})
+            end
+            table.insert(result.linkdirs, path.directory(apath))
+            apath = path.filename(apath)
+            if apath:startswith("lib") then
+                apath = apath:sub(4, apath:len())
+            end
+            table.insert(result.links, apath:sub(1, apath:len() - 3))
+        end
+    end
+    result.includedirs = table.unique(result.includedirs)
+    result.linkdirs = table.unique(result.linkdirs)
+    result.links = table.unique(result.links)
+
+    -- use pacman package version as version
+    local version = try { function() return os.iorunv(pacman.program, {"-Q", name}) end }
+    if version then
+        version = version:trim():split('%s+')[2]
+        result.version = version:split('-')[1]
+    else
+        result = nil
+    end
+    return result
+end
+
 -- find package from the system directories
 --
 -- @param name  the package name
@@ -30,17 +105,15 @@ import("package.manager.pkgconfig.find_package", {alias = "find_package_from_pkg
 --
 function main(name, opt)
 
-    -- init options
-    opt = opt or {}
-
     -- find pacman
+    opt = opt or {}
     local pacman = find_tool("pacman")
     if not pacman then
         return
     end
 
     -- for msys2/mingw? mingw-w64-[i686|x86_64]-xxx
-    if opt.plat == "mingw" then
+    if is_subhost("msys") and opt.plat == "mingw" then
         name = (opt.arch == "x86_64" and "mingw-w64-x86_64-" or "mingw-w64-i686-") .. name
     end
 
@@ -65,28 +138,40 @@ function main(name, opt)
             has_includes = true
         end
     end
+    linkdirs = table.unique(linkdirs)
 
-    -- get pkgconfig file
-    local pkgconfig_file = pkgconfig_files[name]
-    if not pkgconfig_file then
-        for _, file in pairs(pkgconfig_files) do
-            pkgconfig_file = file
-            break
+    -- we iterate over each pkgconfig file to extract the required data
+    local foundpc = false
+    local result = {includedirs = {}, linkdirs = {}, links = {}}
+    for _, pkgconfig_file in pairs(pkgconfig_files) do
+        local pkgconfig_dir = path.directory(pkgconfig_file)
+        local pkgconfig_name = path.basename(pkgconfig_file)
+        local pcresult = find_package_from_pkgconfig(pkgconfig_name, {configdirs = pkgconfig_dir, linkdirs = linkdirs})
+
+        -- the pkgconfig file has been parse successfully
+        if pcresult then
+            for _, includedir in ipairs(pcresult.includedirs) do
+                table.insert(result.includedirs, includedir)
+            end
+            for _, linkdir in ipairs(pcresult.linkdirs) do
+                table.insert(result.linkdirs, linkdir)
+            end
+            for _, link in ipairs(pcresult.links) do
+                table.insert(result.links, link)
+            end
+            -- version should be the same if a pacman package contains multiples .pc
+            result.version = pcresult.version
+            foundpc = true
         end
     end
 
-    -- find package
-    local result = nil
-    if pkgconfig_file then
-        local pkgconfig_dir = path.directory(pkgconfig_file)
-        local pkgconfig_name = path.basename(pkgconfig_file)
-        linkdirs = table.unique(linkdirs)
-        includedirs = table.unique(includedirs)
-        result = find_package_from_pkgconfig(pkgconfig_name, {configdirs = pkgconfig_dir, linkdirs = linkdirs})
-        if not result and has_includes then
-            -- header only and hidden /usr/include? we need only return empty {}
-            result = {}
-        end
+    if foundpc == true then
+        result.includedirs = table.unique(result.includedirs)
+        result.linkdirs = table.unique(result.linkdirs)
+        result.links = table.unique(result.links)
+    else
+        -- if there is no .pc, we parse the package content to obtain the data we want
+        result = _find_package_from_list(list, name, pacman, opt)
     end
     return result
 end

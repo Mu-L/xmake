@@ -48,6 +48,8 @@ function _option_filter(name)
     ,   verbose     = true
     ,   diagnosis   = true
     ,   require     = true
+    ,   export      = true
+    ,   import      = true
     }
     return not options[name]
 end
@@ -65,17 +67,12 @@ function _need_check(changed)
         changed = option.get("clean")
     end
 
-    -- get the current mtimes
+    -- check for all project files
     local mtimes = project.mtimes()
-
-    -- get the previous mtimes
     if not changed then
         local mtimes_prev = localcache.get("config", "mtimes")
         if mtimes_prev then
-
-            -- check for all project files
             for file, mtime in pairs(mtimes) do
-
                 -- modified? reconfig and rebuild it
                 local mtime_prev = mtimes_prev[file]
                 if not mtime_prev or mtime > mtime_prev then
@@ -86,6 +83,11 @@ function _need_check(changed)
         end
     end
 
+    -- unfinished config/recheck
+    if not changed and localcache.get("config", "recheck") then
+        changed = true
+    end
+
     -- xmake has been updated? force to check config again
     -- we need clean the dirty config cache of the old version
     if not changed then
@@ -93,11 +95,6 @@ function _need_check(changed)
             changed = true
         end
     end
-
-    -- update mtimes
-    localcache.set("config", "mtimes", mtimes)
-
-    -- changed?
     return changed
 end
 
@@ -194,6 +191,60 @@ function _config_targets(targetname)
     end
 end
 
+-- find default mode
+function _find_default_mode()
+    local mode = config.mode()
+    if not mode then
+        mode = project.get("defaultmode")
+        if not mode then
+            mode = "release"
+        end
+        config.set("mode", mode)
+    end
+    return mode
+end
+
+-- check configs
+function _check_configs()
+    -- check allowed modes
+    local mode = config.mode()
+    local allowed_modes = project.allowed_modes()
+    if allowed_modes then
+        if not allowed_modes:has(mode) then
+            local allowed_modes_str = table.concat(allowed_modes:to_array(), ", ")
+            raise("`%s` is not a valid complation mode for this project, please use one of %s", mode, allowed_modes_str)
+        end
+    end
+
+    -- check allowed plats
+    local plat = config.plat()
+    local allowed_plats = project.allowed_plats()
+    if allowed_plats then
+        if not allowed_plats:has(plat) then
+            local allowed_plats_str = table.concat(allowed_plats:to_array(), ", ")
+            raise("`%s` is not a valid platform for this project, please use one of %s", plat, allowed_plats_str)
+        end
+    end
+
+    -- check allowed archs
+    local arch = config.arch()
+    local allowed_archs = project.allowed_archs(config.plat())
+    if allowed_archs then
+        if not allowed_archs:has(arch) then
+            local allowed_archs_str = table.concat(allowed_archs:to_array(), ", ")
+            raise("`%s` is not a valid complation arch for this project, please use one of %s", arch, allowed_archs_str)
+        end
+    end
+end
+
+-- export configs
+function _export_configs()
+    local exportfile = option.get("export")
+    if exportfile then
+        config.save(exportfile, {public = true})
+    end
+end
+
 -- main entry
 function main(opt)
 
@@ -234,7 +285,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
     -- the target name
     local targetname = option.get("target") or "all"
 
-    -- load the project configure
+    -- load the project configuration
     --
     -- priority: option > option_cache > global > option_default > config_check > project_check > config_cache
     --
@@ -248,7 +299,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         end
     end
 
-    -- override configure from the options or cache
+    -- override configuration from the options or cache
     local options_history = {}
     if not option.get("clean") and not autogen then
         options_history = localcache.get("config", "options") or {}
@@ -263,7 +314,15 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         config.set(name, value, {readonly = true})
     end
 
-    -- merge the cached configure
+    -- merge configuration from the given import file
+    local importfile = option.get("import")
+    if importfile and os.isfile(importfile) then
+        if config.load(importfile) then
+            options_changed = true
+        end
+    end
+
+    -- merge the cached configuration
     --
     -- @note we cannot load cache config when switching platform, arch ..
     -- so we need known whether options have been changed
@@ -273,7 +332,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         configcache_loaded = config.load()
     end
 
-    -- merge the global configure
+    -- merge the global configuration
     for name, value in pairs(global.options()) do
         if config.get(name) == nil then
             config.set(name, value)
@@ -296,6 +355,10 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         end
     end
 
+    -- find default mode
+    local mode = _find_default_mode()
+    assert(mode == config.mode())
+
     -- find default platform and save to configuration
     local plat, arch = find_platform({global = true})
     assert(plat == config.plat())
@@ -304,7 +367,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
     -- load platform instance
     local instance_plat = platform.load(plat, arch)
 
-    -- merge the checked configure
+    -- merge the checked configuration
     local recheck = _need_check(options_changed or not configcache_loaded or autogen)
     if recheck then
 
@@ -314,6 +377,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         localcache.clear("option")
         localcache.clear("package")
         localcache.clear("toolchain")
+        localcache.set("config", "recheck", true)
         localcache.save()
 
         -- check platform
@@ -333,6 +397,9 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
 
     -- only config for building project using third-party buildsystem
     if not trybuild then
+
+        -- check configs
+        _check_configs()
 
         -- install and update packages
         local require_enable = option.boolean(option.get("require"))
@@ -368,7 +435,14 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         config.dump()
     end
 
+    -- export configs
+    if option.get("export") then
+        _export_configs()
+    end
+
     -- save options and config cache
+    localcache.set("config", "recheck", false)
+    localcache.set("config", "mtimes", project.mtimes())
     config.save()
     localcache.set("config", "options", options)
     localcache.save("config")

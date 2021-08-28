@@ -187,6 +187,7 @@ The test project: [xmake-core](https://github.com/xmake-io/xmake/tree/master/cor
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
 * WatchOS (armv7k, i386)
+* AppleTVOS (armv7, arm64, i386, x86_64)
 * MSYS (i386, x86_64)
 * MinGW (i386, x86_64, arm, arm64)
 * Cygwin (i386, x86_64)
@@ -237,6 +238,7 @@ muslcc        The musl-based cross-compilation toolchains
 * Fortran
 * Cuda
 * Zig
+* Vala
 
 ## Support Features
 
@@ -247,7 +249,9 @@ muslcc        The musl-based cross-compilation toolchains
 * Multi-task parallel compilation support
 * C++20 Module-TS support
 * Support cross-platform C/C++ dependency packages
-* Support self-built distributed and third-party package repositories
+* Support self-built distributed package repositories
+* Support the installation of cloud pre-compiled packages
+* Support third-party package repositories, such as: vcpkg, conan, conda, etc.
 * Support multi-language mixed compilation
 * Flexible lua scripts, rich extension modules
 * Support for generating vsproj/cmake/makefile/compile_commands files
@@ -255,6 +259,7 @@ muslcc        The musl-based cross-compilation toolchains
 * Incremental compilation support, automatic analysis of header dependency files
 * Fast switching toolchains
 * Automatic pull toolchain and dependency package integration
+* Support precompiled package and lock package requires
 
 ## Supported Projects
 
@@ -380,7 +385,7 @@ target("loop")
 ```lua
 target("test")
     set_kind("binary")
-    add_files("src/*.zig")
+    add_files("src/main.zig")
 ```
 
 ### Automatically fetch remote toolchain
@@ -479,7 +484,7 @@ We can uses [xmake-gradle](https://github.com/xmake-io/xmake-gradle) plugin to c
 
 ```
 plugins {
-  id 'org.tboox.gradle-xmake-plugin' version '1.0.6'
+  id 'org.tboox.gradle-xmake-plugin' version '1.1.4'
 }
 
 android {
@@ -554,3 +559,4 @@ This project exists thanks to all the people who have [contributed](CONTRIBUTING
 * [TitanSnow](https://github.com/TitanSnow): provide the xmake [logo](https://github.com/TitanSnow/ts-xmake-logo) and install scripts
 * [uael](https://github.com/uael): provide the semantic versioning library [sv](https://github.com/uael/sv)
 * [OpportunityLiu](https://github.com/OpportunityLiu): improve cuda, tests and ci
+* [xq144](https://github.com/xq114): Improve `xrepo env shell`, and contribute a lot of packages to the [xmake-repo](https://github.com/xmake-io/xmake-repo) repository.

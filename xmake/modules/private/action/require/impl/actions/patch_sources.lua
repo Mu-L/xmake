@@ -21,6 +21,7 @@
 -- imports
 import("core.base.option")
 import("net.http")
+import("net.proxy")
 import("devel.git")
 
 -- check sha256
@@ -49,6 +50,7 @@ end
 function _patch(package, patch_url, patch_hash)
 
     -- trace
+    patch_url = proxy.mirror(patch_url) or patch_url
     vprint("patching %s to %s-%s ..", patch_url, package:name(), package:version_str())
 
     -- get the patch file
@@ -98,6 +100,11 @@ end
 
 -- patch the given package
 function main(package)
+
+    -- we need not patch it if we use the precompiled artifacts to install package
+    if not package:is_built() then
+        return
+    end
 
     -- no patches?
     local patches = package:patches()
