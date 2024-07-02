@@ -210,10 +210,28 @@ function _get_configs_file(package, opt)
         if cc then
             file:print("c=['%s']", executable_path(cc))
         end
+
         local cxx = package:build_getenv("cxx")
         if cxx then
+            -- https://github.com/xmake-io/xmake/discussions/4979
+            if package:has_tool("cxx", "clang", "gcc") then
+                local dir = path.directory(cxx)
+                local name = path.filename(cxx)
+                name = name:gsub("clang$", "clang++")
+                name = name:gsub("clang%-", "clang++-") -- clang-xx
+                name = name:gsub("clang%.", "clang++.") -- clang.exe
+                name = name:gsub("gcc$", "g++")
+                name = name:gsub("gcc%-", "g++-")
+                name = name:gsub("gcc%.", "g++.")
+                if dir and dir ~= "." then
+                    cxx = path.join(dir, name)
+                else
+                    cxx = name
+                end
+            end
             file:print("cpp=['%s']", executable_path(cxx))
         end
+
         local ld = package:build_getenv("ld")
         if ld then
             file:print("ld=['%s']", executable_path(ld))
@@ -268,6 +286,18 @@ function _get_configs_file(package, opt)
         table.join2(cxxflags, _get_cflags_from_packagedeps(package, opt))
         table.join2(ldflags,  _get_ldflags_from_packagedeps(package, opt))
         table.join2(shflags,  _get_ldflags_from_packagedeps(package, opt))
+        -- add runtimes flags
+        for _, runtime in ipairs(package:runtimes()) do
+            if not runtime:startswith("M") then
+                local fake_target = {is_shared = function(_) return false end,
+                                     sourcekinds = function(_) return "cxx" end}
+                table.join2(cxxflags, _map_compflags(fake_target, "cxx", "runtime", {runtime}))
+                table.join2(ldflags, _map_linkflags(fake_target, "binary", {"cxx"}, "runtime", {runtime}))
+                fake_target = {is_shared = function(_) return true end,
+                               sourcekinds = function(_) return "cxx" end}
+                table.join2(shflags, _map_linkflags(fake_target, "shared", {"cxx"}, "runtime", {runtime}))
+            end
+        end
         if #cflags > 0 then
             file:print("c_args=['%s']", table.concat(cflags, "', '"))
         end
@@ -295,7 +325,7 @@ function _get_configs(package, configs, opt)
 
     -- add prefix
     configs = configs or {}
-    table.insert(configs, "--prefix=" .. package:installdir())
+    table.insert(configs, "--prefix=" .. (opt.prefix or package:installdir()))
     table.insert(configs, "--libdir=lib")
 
     -- set build type
@@ -316,7 +346,7 @@ function _get_configs(package, configs, opt)
         table.insert(configs, "-Db_sanitize=address")
     end
 
-    -- add runtimes flags
+    -- add vs runtimes flags
     if package:is_plat("windows") then
         if package:has_runtime("MT") then
             table.insert(configs, "-Db_vscrt=mt")

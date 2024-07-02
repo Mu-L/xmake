@@ -54,8 +54,7 @@ function _do_run_target(target)
     if option.get("debug") then
         debugger.run(targetfile, args, {curdir = rundir, addenvs = addenvs, setenvs = setenvs})
     else
-        local envs = runenvs.join(addenvs, setenvs)
-        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach"), envs = envs})
+        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach"), addenvs = addenvs, setenvs = setenvs})
     end
 end
 
@@ -213,7 +212,7 @@ function main()
         -- we need clear the previous config and reload it
         -- to avoid trigger recheck configs
         config.clear()
-        task.run("build")
+        task.run("build", {target = option.get("target"), all = option.get("all")})
     end
 
     -- load targets

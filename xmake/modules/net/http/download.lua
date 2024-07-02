@@ -99,6 +99,20 @@ function _curl_download(tool, url, outputfile, opt)
         table.insert(argv, "-")
     end
 
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--max-time")
+        table.insert(argv, tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--speed-limit")
+        table.insert(argv, "0")
+        table.insert(argv, "--speed-time")
+        table.insert(argv, tostring(opt.read_timeout))
+    end
+
     -- set url
     table.insert(argv, url)
 
@@ -168,6 +182,16 @@ function _wget_download(tool, url, outputfile, opt)
     -- continue to download?
     if opt.continue then
         table.insert(argv, "-c")
+    end
+
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--timeout=" .. tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--read-timeout=" .. tostring(opt.read_timeout))
     end
 
     -- set outputfile

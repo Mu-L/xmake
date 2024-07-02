@@ -2,16 +2,61 @@
 
 ## master (unreleased)
 
+## v2.9.3
+
+### New features
+
+* [#4637](https://github.com/xmake-io/xmake/issues/4637): Add mix generator for xpack
+* [#5107](https://github.com/xmake-io/xmake/issues/5107): Add deb generator for xpack
+* [#5148](https://github.com/xmake-io/xmake/issues/5148): Add on_source in package
+
+### Changes
+
+* [#5156](https://github.com/xmake-io/xmake/issues/5156): Improve to install cargo packages for rust
+
+### Bugs fixed
+
+* [#5176](https://github.com/xmake-io/xmake/pull/5176): Fix VS toolset v144
+
+## v2.9.2
+
+### New features
+
+* [#5005](https://github.com/xmake-io/xmake/pull/5005): Show all apis
+* [#5003](https://github.com/xmake-io/xmake/issues/5003): Add build.fence policy
+* [#5060](https://github.com/xmake-io/xmake/issues/5060): Support Verilator target build to static library
+* [#5074](https://github.com/xmake-io/xmake/pull/5074): Add `xrepo download` command to download package source
+* [#5086](https://github.com/xmake-io/xmake/issues/5986): Add check support for package
+* [#5103](https://github.com/xmake-io/xmake/pull/5103): Add qt ts files building
+* [#5104](https://github.com/xmake-io/xmake/pull/5104): Call where in find_program
+
+### Changes
+
+* [#5077](https://github.com/xmake-io/xmake/issues/5077): Use x64 host compiler for msvc when building x86 target
+* [#5109](https://github.com/xmake-io/xmake/issues/5109): Support runpath/rpath for add_rpathdirs
+* [#5132](https://github.com/xmake-io/xmake/pull/5132): Improve ifort/icc/icx support on windows
+
+### Bugs Fixed
+
+* [#5059](https://github.com/xmake-io/xmake/issues/5059): Fix load huge targets stuck
+* [#5029](https://github.com/xmake-io/xmake/issues/5029): Fix crash on termux
+
+## v2.9.1
+
 ### New features
 
 * [#4874](https://github.com/xmake-io/xmake/pull/4874): Add Harmony SDK support
 * [#4889](https://github.com/xmake-io/xmake/issues/4889): Add signal module to register signal handler in lua
 * [#4925](https://github.com/xmake-io/xmake/issues/4925): Add native modules support
+* [#4938](https://github.com/xmake-io/xmake/issues/4938): Support for cppfront/h2
 
 ### Changes
 
 * Improve packages to support for clang-cl
 * [#4893](https://github.com/xmake-io/xmake/issues/4893): Improve rc includes deps
+* [#4928](https://github.com/xmake-io/xmake/issues/4928): Improve to build and link speed
+* [#4931](https://github.com/xmake-io/xmake/pull/4931): Update pdcurses
+* [#4973](https://github.com/xmake-io/xmake/issues/4973): Improve to select script
 
 ### Bugs fixed
 
@@ -1783,16 +1828,61 @@
 
 ## master (开发中)
 
+## v2.9.3
+
+### 新特性
+
+* [#4637](https://github.com/xmake-io/xmake/issues/4637): 为 xpack 添加 mix 支持
+* [#5107](https://github.com/xmake-io/xmake/issues/5107): 为 xpack 添加 deb 支持
+* [#5148](https://github.com/xmake-io/xmake/issues/5148): 为包添加 on_source 配置域
+
+### 改进
+
+* [#5156](https://github.com/xmake-io/xmake/issues/5156): 改进安装 cargo 包
+
+### 问题修复
+
+* [#5176](https://github.com/xmake-io/xmake/pull/5176): 修复 VS toolset v144 支持
+
+## v2.9.2
+
+### 新特性
+
+* [#5005](https://github.com/xmake-io/xmake/pull/5005): 显示所有 API
+* [#5003](https://github.com/xmake-io/xmake/issues/5003): 添加 build.fence 策略
+* [#5060](https://github.com/xmake-io/xmake/issues/5060): 支持 Verilator 静态库目标构建
+* [#5074](https://github.com/xmake-io/xmake/pull/5074): 添加 `xrepo download` 命令去快速下载包源码
+* [#5086](https://github.com/xmake-io/xmake/issues/5986): 添加包检测支持
+* [#5103](https://github.com/xmake-io/xmake/pull/5103): 添加 qt ts 构建支持
+* [#5104](https://github.com/xmake-io/xmake/pull/5104): 改进 find_program，在 windows 上调用 where 改进查找
+
+### 改进
+
+* [#5077](https://github.com/xmake-io/xmake/issues/5077): 当构建 x86 目标时，使用 x64 的 msvc 编译工具
+* [#5109](https://github.com/xmake-io/xmake/issues/5109): 改进 add_rpathdirs 支持 runpath/rpath 切换
+* [#5132](https://github.com/xmake-io/xmake/pull/5132): 改进 ifort/icc/icx 在 windows 上的支持
+
+### Bugs 修复
+
+* [#5059](https://github.com/xmake-io/xmake/issues/5059): 修复加载大量 targets 时候卡住
+* [#5029](https://github.com/xmake-io/xmake/issues/5029): 修复在 termux 上崩溃问题
+
+## v2.9.1
+
 ### 新特性
 
 * [#4874](https://github.com/xmake-io/xmake/pull/4874): 添加鸿蒙 SDK 支持
 * [#4889](https://github.com/xmake-io/xmake/issues/4889): 添加 signal 模块 去注册信号处理
 * [#4925](https://github.com/xmake-io/xmake/issues/4925): 添加 native 模块支持
+* [#4938](https://github.com/xmake-io/xmake/issues/4938): 增加对 cppfront/h2 的支持
 
 ### 改进
 
 * 改进包管理，支持切换 clang-cl
 * [#4893](https://github.com/xmake-io/xmake/issues/4893): 改进 rc 头文件依赖检测
+* [#4928](https://github.com/xmake-io/xmake/issues/4928): 改进构建和链接速度，增量编译时候效果更加明显
+* [#4931](https://github.com/xmake-io/xmake/pull/4931): 更新 pdcurses
+* [#4973](https://github.com/xmake-io/xmake/issues/4973): 改进选择脚本的匹配模式
 
 ### Bugs 修复
 

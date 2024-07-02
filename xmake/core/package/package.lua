@@ -39,6 +39,7 @@ local is_cross       = require("base/private/is_cross")
 local memcache       = require("cache/memcache")
 local toolchain      = require("tool/toolchain")
 local compiler       = require("tool/compiler")
+local linker         = require("tool/linker")
 local sandbox        = require("sandbox/sandbox")
 local config         = require("project/config")
 local policy         = require("project/policy")
@@ -108,11 +109,26 @@ end
 
 -- set the value to the package info
 function _instance:set(name, ...)
+    if self._SOURCE_INITED then
+        -- we can use set/add to modify urls, .. in on_load() if urls have been inited.
+        -- but we cannot init urls, ... in on_load() if it has been not inited
+        --
+        -- @see https://github.com/xmake-io/xmake/issues/5148
+        -- https://github.com/xmake-io/xmake-repo/pull/4204
+        if self:_sourceset():has(name) and self:get(name) == nil then
+            os.raise("'%s' can only be initied in on_source() or the description scope.", name)
+        end
+    end
     self._INFO:apival_set(name, ...)
 end
 
 -- add the value to the package info
 function _instance:add(name, ...)
+    if self._SOURCE_INITED then
+        if self:_sourceset():has(name) and self:get(name) == nil then
+            os.raise("'%s' can only be initied in on_source() or the description scope.", name)
+        end
+    end
     self._INFO:apival_add(name, ...)
 end
 
@@ -888,6 +904,7 @@ function _instance:manifest_save()
     manifest.mode        = self:mode()
     manifest.configs     = self:configs()
     manifest.envs        = self:_rawenvs()
+    manifest.pathenvs    = self:_pathenvs():to_array()
 
     -- save enabled library deps
     if self:librarydeps() then
@@ -971,6 +988,40 @@ function _instance:manifest_save()
     local ok, errors = io.save(self:manifest_file(), manifest, { orderkeys = true })
     if not ok then
         os.raise(errors)
+    end
+end
+
+-- get the source configuration set
+function _instance:_sourceset()
+    local sourceset = self._SOURCESET
+    if sourceset == nil then
+        sourceset = hashset.of("urls", "versions", "versionfiles", "configs")
+        self._SOURCESET = sourceset
+    end
+    return sourceset
+end
+
+-- init package source
+function _instance:_init_source()
+    local inited = self._SOURCE_INITED
+    if not inited then
+        local on_source = self:script("source")
+        if on_source then
+            on_source(self)
+        end
+    end
+end
+
+-- load package
+function _instance:_load()
+    self._SOURCE_INITED = true
+    local loaded = self._LOADED
+    if not loaded then
+        local on_load = self:script("load")
+        if on_load then
+            on_load(self)
+        end
+        self._LOADED = true
     end
 end
 
@@ -1201,7 +1252,8 @@ end
 -- get the program and name of the given tool kind
 function _instance:tool(toolkind)
     if self:toolchains() then
-        return toolchain.tool(self:toolchains(), toolkind, {cachekey = "package", plat = self:plat(), arch = self:arch()})
+        local cachekey = "package_" .. tostring(self)
+        return toolchain.tool(self:toolchains(), toolkind, {cachekey = cachekey, plat = self:plat(), arch = self:arch()})
     else
         return platform.tool(toolkind, self:plat(), self:arch())
     end
@@ -1210,7 +1262,8 @@ end
 -- get tool configuration from the toolchains
 function _instance:toolconfig(name)
     if self:toolchains() then
-        return toolchain.toolconfig(self:toolchains(), name, {cachekey = "package", plat = self:plat(), arch = self:arch()})
+        local cachekey = "package_" .. tostring(self)
+        return toolchain.toolconfig(self:toolchains(), name, {cachekey = cachekey, plat = self:plat(), arch = self:arch()})
     else
         return platform.toolconfig(name, self:plat(), self:arch())
     end
@@ -1285,8 +1338,12 @@ function _instance:_versions_list()
         local versionfiles = self:get("versionfiles")
         if versionfiles then
             for _, versionfile in ipairs(table.wrap(versionfiles)) do
-                if not os.isfile(versionfile) then
-                    versionfile = path.join(self:scriptdir(), versionfile)
+                if not path.is_absolute(versionfile) then
+                    local subpath = versionfile
+                    versionfile = path.join(self:scriptdir(), subpath)
+                    if not os.isfile(versionfile) then
+                        versionfile = path.join(self:base():scriptdir(), subpath)
+                    end
                 end
                 if os.isfile(versionfile) then
                     local list = io.readfile(versionfile)
@@ -1730,10 +1787,13 @@ function _instance:_fetch_library(opt)
     local fetchinfo
     local on_fetch = self:script("fetch")
     if on_fetch then
-        fetchinfo = on_fetch(self, {force = opt.force,
-                                    system = opt.system,
-                                    external = opt.external,
-                                    require_version = opt.require_version})
+        -- we cannot fetch it from system if it's cross-compilation package
+        if not opt.system or (opt.system and not self:is_cross()) then
+            fetchinfo = on_fetch(self, {force = opt.force,
+                                        system = opt.system,
+                                        external = opt.external,
+                                        require_version = opt.require_version})
+        end
         if fetchinfo and opt.require_version and opt.require_version:find(".", 1, true) then
             local version = fetchinfo.version
             if not (version and (version == opt.require_version or semver.satisfies(version, opt.require_version))) then
@@ -1946,8 +2006,8 @@ function _instance:fetch(opt)
             end
         end
 
-        -- fetch it from the system and external package sources (disabled for cross-compilation)
-        if not fetchinfo and system ~= false and not self:is_cross() then
+        -- fetch it from the system and external package sources
+        if not fetchinfo and system ~= false then
             fetchinfo = self:_fetch_library({system = true, require_version = require_ver, external = external, force = opt.force})
             if fetchinfo then
                 is_system = true
@@ -2267,28 +2327,35 @@ end
 -- generate building configs for has_xxx/check_xxx
 function _instance:_generate_build_configs(configs, opt)
     opt = opt or {}
-    configs = table.join(self:fetch_librarydeps(), configs)
-    if self:is_plat("windows") then
-        local ld = self:build_getenv("ld")
-        local runtimes = self:runtimes()
-        -- since we are ignoring the runtimes of the headeronly library,
-        -- we can only get the runtimes from the dependency library to detect the link.
-        if self:is_headeronly() and not runtimes and self:librarydeps() then
-            for _, dep in ipairs(self:librarydeps()) do
-                if dep:is_plat("windows") and dep:runtimes() then
-                    runtimes = dep:runtimes()
-                    break
-                end
+    configs = table.join(self:fetch_librarydeps() or {}, configs)
+    -- since we are ignoring the runtimes of the headeronly library,
+    -- we can only get the runtimes from the dependency library to detect the link.
+    local runtimes = self:runtimes()
+    if self:is_headeronly() and not runtimes and self:librarydeps() then
+        for _, dep in ipairs(self:librarydeps()) do
+            if dep:is_plat("windows") and dep:runtimes() then
+                runtimes = dep:runtimes()
+                break
             end
         end
-        if runtimes and ld and path.basename(ld:lower()) == "link" then -- for msvc?
-            configs.cxflags = table.wrap(configs.cxflags)
-            table.insert(configs.cxflags, "/" .. runtimes)
-            if runtimes:startswith("MT") then
-                configs.ldflags = table.wrap(configs.ldflags)
-                table.insert(configs.ldflags, "-nodefaultlib:msvcrt.lib")
-            end
+    end
+    if runtimes then
+        local sourcekind = opt.sourcekind or "cxx"
+        local tool, name = self:tool("ld")
+        local linker, errors = linker.load("binary", sourcekind, {target = package})
+        if not linker then
+            os.raise(errors)
         end
+        local fake_target = {is_shared = function(_) return false end, 
+                             sourcekinds = function(_) return sourcekind end}
+        local compiler = self:compiler(sourcekind)
+        local cxflags = compiler:map_flags("runtime", runtimes, {target = fake_target})
+        configs.cxflags = table.wrap(configs.cxflags)
+        table.join2(configs.cxflags, cxflags)
+
+        local ldflags = linker:map_flags("runtime", runtimes, {target = fake_target})
+        configs.ldflags = table.wrap(configs.ldflags)
+        table.join2(configs.ldflags, ldflags)
     end
     if self:config("lto") then
         local configs_lto = self:_generate_lto_configs(opt.sourcekind or "cxx")
@@ -2648,8 +2715,10 @@ function package.apis()
     ,   script =
         {
             -- package.on_xxx
-            "package.on_load"
+            "package.on_source"
+        ,   "package.on_load"
         ,   "package.on_fetch"
+        ,   "package.on_check"
         ,   "package.on_download"
         ,   "package.on_install"
         ,   "package.on_test"
@@ -2893,6 +2962,12 @@ function package.load_from_repository(packagename, packagedir, opt)
     package._memcache():set2("packages", instance)
     return instance
 end
+
+-- new a package instance
+function package.new(...)
+    return _instance.new(...)
+end
+
 
 -- return module
 return package

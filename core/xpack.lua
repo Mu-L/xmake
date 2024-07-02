@@ -3,9 +3,9 @@ xpack("xmake")
     set_title("Xmake build utility ($(arch))")
     set_description("A cross-platform build utility based on Lua.")
     set_copyright("Copyright (C) 2015-present, TBOOX Open Source Group")
-    set_author("waruqi@gmail.com")
+    set_author("ruki <waruqi@gmail.com>")
     set_licensefile("../LICENSE.md")
-    set_formats("nsis", "zip")
+    set_formats("nsis", "wix", "zip")
     add_targets("demo")
     set_bindir(".")
     set_iconfile("src/demo/xmake.ico")
@@ -33,14 +33,22 @@ xpack("xmake")
         import("utils.archive")
         import("core.base.global")
         local format = package:format()
-        if package:is_plat("windows") and (format == "nsis" or format == "zip") then
+        if package:is_plat("windows") and (format == "nsis" or format == "wix" or format == "zip") then
             local winenv = path.join(os.programdir(), "winenv")
             if os.isdir(winenv) then
                 package:add("installfiles", path.join(winenv, "**"), {rootdir = path.directory(winenv)})
             else
                 local arch = package:arch()
-                local url_7z = "https://github.com/xmake-mirror/7zip/releases/download/19.00/7z19.00-" .. arch .. ".zip"
-                local url_curl = "https://curl.se/windows/dl-8.2.1_11/curl-8.2.1_11-win32-mingw.zip"
+                local url_7z = "https://github.com/xmake-mirror/7zip/releases/download/24.07/7z24.07-" .. arch .. ".zip"
+                local curl_version = "8.8.0_2"
+                local url_curl = "https://curl.se/windows/dl-" .. curl_version .. "/curl-" .. curl_version
+                if package:is_arch("x64", "x86_64") then
+                    url_curl = url_curl .. "-win64-mingw.zip"
+                elseif package:is_arch("arm64") then
+                    url_curl = url_curl .. "-win64a-mingw.zip"
+                else
+                    url_curl = url_curl .. "-win32-mingw.zip"
+                end
                 local archive_7z = path.join(package:buildir(), "7z.zip")
                 local archive_curl = path.join(package:buildir(), "curl.zip")
                 local tmpdir_7z = path.join(package:buildir(), "7z")
@@ -48,18 +56,12 @@ xpack("xmake")
                 local winenv_bindir = path.join(package:buildir(), "winenv", "bin")
                 os.mkdir(winenv_bindir)
                 http.download(url_7z, archive_7z, {insecure = global.get("insecure-ssl")})
-                if archive.extract(archive_7z, tmpdir_7z) then
-                    os.cp(path.join(tmpdir_7z, "*"), winenv_bindir)
-                else
-                    raise("extract 7z.zip failed!")
-                end
+                archive.extract(archive_7z, tmpdir_7z)
+                os.cp(path.join(tmpdir_7z, "*"), winenv_bindir)
                 http.download(url_curl, archive_curl, {insecure = global.get("insecure-ssl")})
-                if archive.extract(archive_curl, tmpdir_curl) then
-                    os.cp(path.join(tmpdir_curl, "*", "bin", "*.exe"), winenv_bindir)
-                    os.cp(path.join(tmpdir_curl, "*", "bin", "*.crt"), winenv_bindir)
-                else
-                    raise("extract curl.zip failed!")
-                end
+                archive.extract(archive_curl, tmpdir_curl)
+                os.cp(path.join(tmpdir_curl, "*", "bin", "*.exe"), winenv_bindir)
+                os.cp(path.join(tmpdir_curl, "*", "bin", "*.crt"), winenv_bindir)
                 winenv = path.directory(winenv_bindir)
                 package:add("installfiles", path.join(winenv, "**"), {rootdir = path.directory(winenv)})
             end
@@ -75,6 +77,11 @@ xpack_component("LongPath")
     ; Enable long path
     WriteRegDWORD ${HKLM} "SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
   ${EndIf}]])
+        batchcmds:rawcmd("wix", [[
+    <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\FileSystem">
+        <RegistryValue Type="integer" Name="LongPathsEnabled" Value="1" KeyPath="yes"/>
+    </RegistryKey>
+        ]])
     end)
 
 xpack("xmakesrc")
@@ -82,8 +89,8 @@ xpack("xmakesrc")
     set_title("Xmake build utility ($(arch))")
     set_description("A cross-platform build utility based on Lua.")
     set_copyright("Copyright (C) 2015-present, TBOOX Open Source Group")
-    set_author("waruqi@gmail.com")
-    set_formats("srczip", "srctargz", "runself", "srpm")
+    set_author("ruki <waruqi@gmail.com>")
+    set_formats("srczip", "srctargz", "runself", "srpm", "deb")
     set_basename("xmake-v$(version)")
     set_prefixdir("xmake-$(version)")
     set_license("Apache-2.0")
@@ -116,7 +123,7 @@ xpack("xmakesrc")
 
     on_buildcmd(function (package, batchcmds)
         local format = package:format()
-        if format == "srpm" then
+        if format == "srpm" or format == "deb" then
             batchcmds:runv("./configure")
             batchcmds:runv("make")
         end
@@ -126,7 +133,7 @@ xpack("xmakesrc")
         local format = package:format()
         if format == "runself" then
             batchcmds:runv("./scripts/get.sh", {"__local__"})
-        elseif format == "srpm" then
+        elseif format == "srpm" or format == "deb" then
             batchcmds:runv("make", {"install", path(package:install_rootdir(), function (p) return "PREFIX=" .. p end)})
         end
     end)

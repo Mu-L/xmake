@@ -233,6 +233,28 @@ function _translate_flags(flags, outputdir)
     return result
 end
 
+-- map compiler flags
+function _map_compflags(toolname, langkind, name, values)
+    local fake_target = {
+        is_shared = function() return false end,
+        tool = function()
+            local program
+            if toolname == "cl" then
+                program = "cl.exe"
+            elseif toolname == "gcc" then
+                program = "gcc"
+            elseif toolname == "clang" then
+                program = "clang"
+            end
+            return program, toolname
+        end,
+        sourcekinds = function()
+            return langkind == "c" and "cc" or "cxx"
+        end
+    }
+    return compiler.map_flags(langkind, name, values, {target = fake_target})
+end
+
 -- get flags from fileconfig
 function _get_flags_from_fileconfig(fileconfig, outputdir, name)
     local flags = {}
@@ -641,89 +663,50 @@ function _add_target_compile_options(cmakelists, target, outputdir)
     end
 end
 
--- add target warnings
-function _add_target_warnings(cmakelists, target)
-    local flags_gcc =
-    {
-        none       = "-w"
-    ,   less       = "-Wall"
-    ,   more       = "-Wall"
-    ,   all        = "-Wall"
-    ,   allextra   = "-Wall -Wextra"
-    ,   pedantic   = "-Wpedantic"
-    ,   everything = "-Wall -Wextra"
-    ,   error      = "-Werror"
-    }
-    local flags_msvc =
-    {
-        none       = "-W0"
-    ,   less       = "-W1"
-    ,   more       = "-W3"
-    ,   all        = "-W3" -- = "-Wall" will enable too more warnings
-    ,   allextra   = "-W4"
-    ,   everything = "-Wall"
-    ,   error      = "-WX"
-    }
-    local warnings = target:get("warnings")
-    if warnings then
-        cmakelists:print("if(MSVC)")
-        for _, warn in ipairs(warnings) do
-            local flag = flags_msvc[warn]
-            if flag then
-                cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flag)
-            end
+-- add target values
+function _add_target_values(cmakelists, target, name)
+    local values = target:get(name)
+    if values then
+        if name:endswith("s") then
+            name = name:sub(1, #name - 1)
         end
-        cmakelists:print("else()")
-        for _, warn in ipairs(warnings) do
-            local flag = flags_gcc[warn]
-            if flag then
-                cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flag)
-            end
+        cmakelists:print("if(MSVC)")
+        local flags_cl = _map_compflags("cl", "c", name, values)
+        for _, flag in ipairs(flags_cl) do
+            cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flag)
+        end
+        cmakelists:print("elseif(Clang)")
+        local flags_clang = _map_compflags("clang", "c", name, values)
+        for _, flag in ipairs(flags_clang) do
+            cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flag)
+        end
+        cmakelists:print("elseif(Gcc)")
+        local flags_gcc = _map_compflags("gcc", "c", name, values)
+        for _, flag in ipairs(flags_gcc) do
+            cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flag)
         end
         cmakelists:print("endif()")
     end
 end
 
+-- add target warnings
+function _add_target_warnings(cmakelists, target)
+    _add_target_values(cmakelists, target, "warnings")
+end
+
+-- add target encodings
+function _add_target_encodings(cmakelists, target)
+    _add_target_values(cmakelists, target, "encodings")
+end
+
 -- add target exceptions
 function _add_target_exceptions(cmakelists, target)
-    local flags_gcc =
-    {
-        cxx = "-fexceptions",
-        ["no-cxx"] = "-fno-exceptions",
-        objc = "-fobjc-exceptions",
-        ["no-objc"] = "-fno-objc-exceptions"
-    }
-    local flags_clang =
-    {
-        cxx = "-fcxx-exceptions",
-        ["no-cxx"] = "-fno-cxx-exceptions",
-        objc = "-fobjc-exceptions",
-        ["no-objc"] = "-fno-objc-exceptions"
-    }
-    local flags_msvc =
-    {
-        cxx = "/EHsc",
-        ["no-cxx"] = "/EHsc-"
-    }
     local exceptions = target:get("exceptions")
     if exceptions then
         if exceptions == "none" then
             cmakelists:print("string(REPLACE \"/EHsc\" \"\" CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS}\")")
         else
-            cmakelists:print("if(MSVC)")
-            -- msvc or clang-cl
-            for _, exception in ipairs(exceptions) do
-                cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flags_msvc[exception])
-            end
-            cmakelists:print("elseif(Clang)")
-            for _, exception in ipairs(exceptions) do
-                cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flags_clang[exception])
-            end
-            cmakelists:print("else()")
-            for _, exception in ipairs(exceptions) do
-                cmakelists:print("    target_compile_options(%s PRIVATE %s)", target:name(), flags_gcc[exception])
-            end
-            cmakelists:print("endif()")
+            _add_target_values(cmakelists, target, "exceptions")
         end
     end
 end
@@ -732,28 +715,65 @@ end
 function _add_target_languages(cmakelists, target)
     local features =
     {
-        c89   = "c_std_90"
-    ,   c99   = "c_std_99"
-    ,   c11   = "c_std_11"
-    ,   cxx98 = "cxx_std_98"
-    ,   cxx11 = "cxx_std_11"
-    ,   cxx14 = "cxx_std_14"
-    ,   cxx17 = "cxx_std_17"
-    ,   cxx20 = "cxx_std_20"
-    ,   cxx23 = "cxx_std_23"
+        c89       = "c_std_90"
+    ,   c99       = "c_std_99"
+    ,   c11       = "c_std_11"
+    ,   c17       = "c_std_17"
+    ,   c23       = "c_std_23"
+    ,   clatest   = "c_std_latest"
+    ,   cxx98     = "cxx_std_98"
+    ,   cxx11     = "cxx_std_11"
+    ,   cxx14     = "cxx_std_14"
+    ,   cxx17     = "cxx_std_17"
+    ,   cxx20     = "cxx_std_20"
+    ,   cxx23     = "cxx_std_23"
+    ,   cxx26     = "cxx_std_26"
+    ,   cxxlatest = "cxx_std_latest"
     }
     local languages = target:get("languages")
     if languages then
         for _, lang in ipairs(languages) do
             local has_ext = false
+            -- c | c++ | gnu | gnu++
+            local flag = lang:replace('xx', '++'):replace('latest', ''):gsub('%d', '')
             if lang:startswith("gnu") then
-                lang = lang:sub(4)
+                lang = 'c' .. lang:sub(4)
                 has_ext = true
             end
             local feature = features[lang] or (features[lang:replace("++", "xx")])
             if feature then
-                cmakelists:print("set_target_properties(%s PROPERTIES CXX_EXTENSIONS %s)", target:name(), has_ext and "ON" or "OFF")
-                cmakelists:print("target_compile_features(%s PRIVATE %s)", target:name(), feature)
+                cmakelists:print("set_target_properties(%s PROPERTIES %s_EXTENSIONS %s)", target:name(), flag:endswith('++') and 'CXX' or 'C', has_ext and "ON" or "OFF")
+                if feature:endswith('_latest') then
+                    if flag:endswith('++') then
+                        cmakelists:print('foreach(standard 26 23 20 17 14 11 98)')
+                        cmakelists:print('    include(CheckCXXCompilerFlag)')
+                        cmakelists:print('    if(MSVC)')
+                        cmakelists:print('        check_cxx_compiler_flag("/std:%s${standard}" %s_support_%s_standard_${standard})', flag, target:name(), flag)
+                        cmakelists:print('    else()')
+                        cmakelists:print('        check_cxx_compiler_flag("-std=%s${standard}" %s_support_%s_standard_${standard})', flag, target:name(), flag)
+                        cmakelists:print('    endif()')
+                        cmakelists:print('    if(%s_support_%s_standard_${standard})', target:name(), flag)
+                        cmakelists:print('        target_compile_features(%s PRIVATE cxx_std_${standard})', target:name())
+                        cmakelists:print('        break()')
+                        cmakelists:print('    endif()')
+                        cmakelists:print('endforeach()')
+                    else
+                        cmakelists:print('foreach(standard 23 17 11 99 90)')
+                        cmakelists:print('    include(CheckCCompilerFlag)')
+                        cmakelists:print('    if(MSVC)')
+                        cmakelists:print('        check_c_compiler_flag("/std:%s${standard}" %s_support_%s_standard_${standard})', flag, target:name(), flag)
+                        cmakelists:print('    else()')
+                        cmakelists:print('        check_c_compiler_flag("-std=%s${standard}" %s_support_%s_standard_${standard})', flag, target:name(), flag)
+                        cmakelists:print('    endif()')
+                        cmakelists:print('    if(%s_support_%s_standard_${standard})', target:name(), flag)
+                        cmakelists:print('        target_compile_features(%s PRIVATE c_std_${standard})', target:name())
+                        cmakelists:print('        break()')
+                        cmakelists:print('    endif()')
+                        cmakelists:print('endforeach()')
+                    end
+                else
+                    cmakelists:print('target_compile_features(%s PRIVATE %s)', target:name(), feature)
+                end
             end
         end
     end
@@ -1120,6 +1140,9 @@ function _add_target(cmakelists, target, outputdir)
 
     -- add target warnings
     _add_target_warnings(cmakelists, target)
+
+    -- add target exceptions
+    _add_target_encodings(cmakelists, target)
 
     -- add target exceptions
     _add_target_exceptions(cmakelists, target)

@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://xmake.io/cn">
-    <img width="160" heigth="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+    <img width="160" height="160" src="https://tboox.org/static/img/xmake/logo256c.png">
   </a>
 
   <h1>xmake</h1>
@@ -243,7 +243,7 @@ $ xmake f --menu
 
 * Windows (x86, x64, arm64)
 * macOS (i386, x86_64, arm64)
-* Linux (i386, x86_64, cross-toolchains ..)
+* Linux (i386, x86_64, arm, arm64, riscv, mips, 390x, sh4 ...)
 * *BSD (i386, x86_64)
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
@@ -513,7 +513,7 @@ target("test")
 add_requires("llvm 10.x", {alias = "llvm-10"})
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("llvm@llvm-10")
 ````
 
@@ -525,7 +525,7 @@ target("test")
 add_requires("muslcc")
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("@muslcc")
 ```
 

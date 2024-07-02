@@ -934,6 +934,12 @@ function _load_package(packagename, requireinfo, opt)
     -- finish requireinfo
     _finish_requireinfo(requireinfo, package)
 
+    -- save require info
+    package:requireinfo_set(requireinfo)
+
+    -- init urls source
+    package:_init_source()
+
     -- select package version
     local version, source = _select_package_version(package, requireinfo, locked_requireinfo)
     if version then
@@ -957,9 +963,6 @@ function _load_package(packagename, requireinfo, opt)
         end
         return package_cached
     end
-
-    -- save require info
-    package:requireinfo_set(requireinfo)
 
     -- save display name
     if not displayname then
@@ -1002,10 +1005,7 @@ function _load_package(packagename, requireinfo, opt)
     end
 
     -- do load
-    local on_load = package:script("load")
-    if on_load then
-        on_load(package)
-    end
+    package:_load()
 
     -- load all components
     for _, component in pairs(package:components()) do
@@ -1058,7 +1058,7 @@ function _load_packages(requires, opt)
                     package._ORDERDEPS = table.unique(_sort_packagedeps(package))
                     package._LIBRARYDEPS = table.reverse_unique(_sort_librarydeps(package))
                     package._LIBRARYDEPS_WITH_PRIVATE = table.reverse_unique(_sort_librarydeps(package, {private = true}))
-                    -- we always need load dependences everytime
+                    -- we always need load dependencies everytime
                     -- @see https://github.com/xmake-io/xmake/issues/4522
                     local packagedeps = {}
                     for _, dep in ipairs(package._ORDERDEPS) do
@@ -1092,7 +1092,7 @@ function _get_parents_str(package)
     end
 end
 
--- check dependences conflicts
+-- check dependencies conflicts
 --
 -- It exists conflict for dependent packages for each root packages? resolve it first
 -- e.g.
@@ -1112,7 +1112,7 @@ function _check_package_depconflicts(package)
         local key = _get_packagekey(dep:name(), dep:requireinfo())
         local prevkey = packagekeys[dep:name()]
         if prevkey then
-            assert(key == prevkey, "package(%s): conflict dependences with package(%s) in %s!", key, prevkey, package:name())
+            assert(key == prevkey, "package(%s): conflict dependencies with package(%s) in %s!", key, prevkey, package:name())
         else
             packagekeys[dep:name()] = key
         end

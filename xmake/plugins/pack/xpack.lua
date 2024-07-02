@@ -190,19 +190,38 @@ function xpack:inputkind()
     local inputkind = self:get("inputkind")
     if inputkind == nil then
         local inputkinds = {
-            nsis  = "binary",
-            zip   = "binary",
-            targz = "binary",
-            srczip = "source",
+            wix      = "binary",
+            nsis     = "binary",
+            zip      = "binary",
+            targz    = "binary",
+            srczip   = "source",
             srctargz = "source",
-            runself = "source",
-            deb = "source",
-            srpm = "source",
-            rpm = "source"
+            runself  = "source",
+            deb      = "source",
+            srpm     = "source",
+            rpm      = "source"
         }
         inputkind = inputkinds[self:format()] or "binary"
     end
     return inputkind
+end
+
+-- get the output kind
+function xpack:outputkind()
+    local outputkinds = {
+        wix      = "binary",
+        nsis     = "binary",
+        zip      = "binary",
+        targz    = "binary",
+        srczip   = "source",
+        srctargz = "source",
+        runself  = "source",
+        deb      = "binary",
+        srpm     = "source",
+        rpm      = "binary"
+    }
+    local outputkind = outputkinds[self:format()] or "binary"
+    return outputkind
 end
 
 -- pack from source files?
@@ -213,6 +232,16 @@ end
 -- pack from binary files?
 function xpack:from_binary()
     return self:inputkind() == "binary"
+end
+
+-- pack with source files?
+function xpack:with_source()
+    return self:outputkind() == "source"
+end
+
+-- pack with binary files?
+function xpack:with_binary()
+    return self:outputkind() == "binary"
 end
 
 -- get the build directory
@@ -234,7 +263,7 @@ function xpack:basename()
     local basename = option.get("basename") or self:get("basename")
     if basename == nil then
         basename = self:name()
-        if self:from_source() then
+        if self:with_source() then
             basename = basename .. "-src"
         end
         local version = self:version()
@@ -318,23 +347,12 @@ function xpack:specvars()
     return specvars
 end
 
--- get the specfile path
-function xpack:specfile()
-    local extensions = {
-        nsis = ".nsi",
-        srpm = ".spec",
-        rpm = ".spec",
-        runself = ".lsm"
-    }
-    local extension = extensions[self:format()] or ".spec"
-    return self:get("specfile") or path.join(self:buildir(), self:basename() .. extension)
-end
-
 -- get the extension
 function xpack:extension()
     local extension = self:get("extension")
     if extension == nil then
         local extensions = {
+            wix      = ".msi",
             nsis     = ".exe",
             zip      = ".zip",
             targz    = ".tar.gz",

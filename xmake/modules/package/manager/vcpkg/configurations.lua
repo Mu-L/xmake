@@ -41,6 +41,7 @@ end
 function plat(plat)
     local plats = {
         macosx          = "osx",
+        iphoneos        = "ios",
         bsd             = "freebsd",
     }
     return plats[plat] or plat
@@ -54,6 +55,17 @@ function triplet(configs, plat, arch)
         triplet = triplet .. "-static"
         if configs.runtimes and configs.runtimes:startswith("MD") then
             triplet = triplet .. "-md"
+        end
+    elseif plat == "linux" then
+        -- x64-linux-dynamic
+        if arch == "x64" and configs.shared then
+            triplet = triplet .. "-dynamic"
+        end
+    elseif plat == "osx" then
+        -- x64-osx-dynamic
+        -- arm64-osx-dynamic
+        if (arch == "x64" or arch == "arm64") and configs.shared then
+            triplet = triplet .. "-dynamic"
         end
     elseif plat == "mingw" then
         triplet = triplet .. (configs.shared ~= true and "-static" or "-dynamic")

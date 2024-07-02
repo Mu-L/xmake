@@ -288,25 +288,20 @@ function _get_cmake_version()
     return cmake_version
 end
 
--- get vs toolset
-function _get_vs_toolset(package)
-    local toolset_ver = nil
-    local vs_toolset = _get_msvc(package):config("vs_toolset") or config.get("vs_toolset")
-    if vs_toolset then
-        local verinfo = vs_toolset:split('%.')
-        if #verinfo >= 2 then
-            toolset_ver = "v" .. verinfo[1] .. (verinfo[2]:sub(1, 1) or "0")
-        end
+function _get_cmake_system_processor(package)
+    -- on Windows, CMAKE_SYSTEM_PROCESSOR comes from PROCESSOR_ARCHITECTURE
+    -- on other systems it's the output of uname -m
+    if package:is_plat("windows") then
+        local archs = {
+            x86 = "x86",
+            x64 = "AMD64",
+            x86_64 = "AMD64",
+            arm = "ARM",
+            arm64 = "ARM64"
+        }
+        return archs[package:arch()] or package:arch()
     end
-    -- cmake does not support vs toolset v144 below 3.29.0, we can only use v143
-    -- @see https://github.com/xmake-io/xmake/issues/4772
-    if toolset_ver and toolset_ver >= "v144" then
-        local cmake_version = _get_cmake_version()
-        if cmake_version and cmake_version:le("3.29.0") then
-            toolset_ver = "v143"
-        end
-    end
-    return toolset_ver
+    return package:arch()
 end
 
 -- insert configs from envs
@@ -366,7 +361,7 @@ function _get_configs_for_windows(package, configs, opt)
         else
             table.insert(configs, "x64")
         end
-        local vs_toolset = _get_vs_toolset(package)
+        local vs_toolset = toolchain_utils.get_vs_toolset_ver(_get_msvc(package):config("vs_toolset") or config.get("vs_toolset"))
         if vs_toolset then
             table.insert(configs, "-DCMAKE_GENERATOR_TOOLSET=" .. vs_toolset)
         end
@@ -383,28 +378,14 @@ function _get_configs_for_windows(package, configs, opt)
     -- we maybe need patch `cmake_policy(SET CMP0091 NEW)` to enable this argument for some packages
     -- @see https://cmake.org/cmake/help/latest/policy/CMP0091.html#policy:CMP0091
     -- https://github.com/xmake-io/xmake-repo/pull/303
-    local runtime
     if package:has_runtime("MT") then
         table.insert(configs, "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded")
-        runtime = "MT"
     elseif package:has_runtime("MTd") then
         table.insert(configs, "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebug")
-        runtime = "MTd"
     elseif package:has_runtime("MD") then
         table.insert(configs, "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
-        runtime = "MD"
     elseif package:has_runtime("MDd") then
         table.insert(configs, "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebugDLL")
-        runtime = "MDd"
-    end
-    if runtime then
-        -- CMake default MSVC flags as of 3.21.2
-        local default_debug_flags = "/Zi /Ob0 /Od /RTC1"
-        local default_release_flags = "/O2 /Ob2 /DNDEBUG"
-        table.insert(configs, '-DCMAKE_CXX_FLAGS_DEBUG=/' .. runtime .. ' ' .. default_debug_flags)
-        table.insert(configs, '-DCMAKE_CXX_FLAGS_RELEASE=/' .. runtime .. ' ' .. default_release_flags)
-        table.insert(configs, '-DCMAKE_C_FLAGS_DEBUG=/' .. runtime .. ' ' .. default_debug_flags)
-        table.insert(configs, '-DCMAKE_C_FLAGS_RELEASE=/' .. runtime .. ' ' .. default_release_flags)
     end
     if not opt._configs_str:find("CMAKE_COMPILE_PDB_OUTPUT_DIRECTORY") then
         table.insert(configs, "-DCMAKE_COMPILE_PDB_OUTPUT_DIRECTORY=pdb")
@@ -437,6 +418,13 @@ function _get_configs_for_android(package, configs, opt)
                 table.insert(configs, "-DCMAKE_MAKE_PROGRAM=" .. make)
             end
         end
+
+        -- avoid find and add system include/library path
+        -- @see https://github.com/xmake-io/xmake/issues/2037
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH")
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH")
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH")
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER")
     end
     _get_configs_for_generic(package, configs, opt)
 end
@@ -463,10 +451,12 @@ function _get_configs_for_appleos(package, configs, opt)
         if package:is_arch("x86_64", "i386") then
             envs.CMAKE_OSX_SYSROOT = "iphonesimulator"
         end
-    elseif package:is_plat("macosx") then
+    elseif package:is_cross() then
         envs.CMAKE_SYSTEM_NAME = "Darwin"
+        envs.CMAKE_SYSTEM_PROCESSOR = _get_cmake_system_processor(package)
     end
     envs.CMAKE_OSX_ARCHITECTURES = package:arch()
+    envs.CMAKE_FIND_ROOT_PATH_MODE_PACKAGE   = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY   = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE   = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_FRAMEWORK = "BOTH"
@@ -495,9 +485,11 @@ function _get_configs_for_mingw(package, configs, opt)
     envs.CMAKE_EXE_LINKER_FLAGS    = _get_ldflags(package, opt)
     envs.CMAKE_SHARED_LINKER_FLAGS = _get_shflags(package, opt)
     envs.CMAKE_SYSTEM_NAME         = "Windows"
+    envs.CMAKE_SYSTEM_PROCESSOR    = _get_cmake_system_processor(package)
     -- avoid find and add system include/library path
     -- @see https://github.com/xmake-io/xmake/issues/2037
     envs.CMAKE_FIND_ROOT_PATH      = sdkdir
+    envs.CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_PROGRAM = "NEVER"
@@ -578,7 +570,7 @@ function _get_configs_for_cross(package, configs, opt)
     envs.CMAKE_SHARED_LINKER_FLAGS = _get_shflags(package, opt)
     -- we don't need to set it as cross compilation if we just pass toolchain
     -- https://github.com/xmake-io/xmake/issues/2170
-    if not package:is_plat(os.subhost()) then
+    if package:is_cross() then
         local system_name = package:targetos() or "Linux"
         if system_name == "linux" then
             system_name = "Linux"
@@ -592,6 +584,7 @@ function _get_configs_for_cross(package, configs, opt)
     -- avoid find and add system include/library path
     -- @see https://github.com/xmake-io/xmake/issues/2037
     envs.CMAKE_FIND_ROOT_PATH              = sdkdir
+    envs.CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_PROGRAM = "NEVER"
@@ -653,7 +646,7 @@ function _get_configs_for_host_toolchain(package, configs, opt)
     envs.CMAKE_SHARED_LINKER_FLAGS = _get_shflags(package, opt)
     -- we don't need to set it as cross compilation if we just pass toolchain
     -- https://github.com/xmake-io/xmake/issues/2170
-    if not package:is_plat(os.subhost()) then
+    if package:is_cross() then
         envs.CMAKE_SYSTEM_NAME     = "Linux"
     else
         if package:config("pic") ~= false then
@@ -737,7 +730,109 @@ function _get_configs_for_install(package, configs, opt)
     end
 end
 
--- get configs
+function _get_default_flags(package, configs, buildtype, opt)
+    -- The default flags are different for different platforms
+    -- @see https://github.com/xmake-io/xmake-repo/pull/4038#issuecomment-2116489448
+    local cachekey = buildtype .. package:plat() .. package:arch()
+    local cmake_default_flags = _g.cmake_default_flags and _g.cmake_default_flags[cachekey]
+    if not cmake_default_flags then
+        local tmpdir = path.join(os.tmpdir() .. ".dir", package:name(), package:mode())
+        local dummy_cmakelist = path.join(tmpdir, "CMakeLists.txt")
+
+        io.writefile(dummy_cmakelist, format([[
+    message(STATUS "CMAKE_C_FLAGS is ${CMAKE_C_FLAGS}")
+    message(STATUS "CMAKE_C_FLAGS_%s is ${CMAKE_C_FLAGS_%s}")
+
+    message(STATUS "CMAKE_CXX_FLAGS is ${CMAKE_CXX_FLAGS}")
+    message(STATUS "CMAKE_CXX_FLAGS_%s is ${CMAKE_CXX_FLAGS_%s}")
+
+    message(STATUS "CMAKE_EXE_LINKER_FLAGS is ${CMAKE_EXE_LINKER_FLAGS}")
+    message(STATUS "CMAKE_EXE_LINKER_FLAGS_%s is ${CMAKE_EXE_LINKER_FLAGS_%s}")
+
+    message(STATUS "CMAKE_SHARED_LINKER_FLAGS is ${CMAKE_SHARED_LINKER_FLAGS}")
+    message(STATUS "CMAKE_SHARED_LINKER_FLAGS_%s is ${CMAKE_SHARED_LINKER_FLAGS_%s}")
+
+    message(STATUS "CMAKE_STATIC_LINKER_FLAGS is ${CMAKE_STATIC_LINKER_FLAGS}")
+    message(STATUS "CMAKE_STATIC_LINKER_FLAGS_%s is ${CMAKE_STATIC_LINKER_FLAGS_%s}")
+        ]], buildtype, buildtype, buildtype, buildtype, buildtype, buildtype, buildtype, buildtype, buildtype, buildtype))
+
+        local runenvs = opt.envs or buildenvs(package)
+        local cmake = find_tool("cmake")
+        local _configs = table.join(configs, "-S " .. path.directory(dummy_cmakelist), "-B " .. tmpdir)
+        local outdata = try{ function() return os.iorunv(cmake.program, _configs, {envs = runenvs}) end}
+        if outdata then
+            cmake_default_flags = {}
+            cmake_default_flags.cflags = outdata:match("CMAKE_C_FLAGS is (.-)\n") or " "
+            cmake_default_flags.cflags = cmake_default_flags.cflags .. " " .. outdata:match(format("CMAKE_C_FLAGS_%s is (.-)\n", buildtype)):replace("/MDd", ""):replace("/MD", "")
+            cmake_default_flags.cxxflags = outdata:match("CMAKE_CXX_FLAGS is (.-)\n") or " "
+            cmake_default_flags.cxxflags = cmake_default_flags.cxxflags .. " " .. outdata:match(format("CMAKE_CXX_FLAGS_%s is (.-)\n", buildtype)):replace("/MDd", ""):replace("/MD", "")
+            cmake_default_flags.ldflags = outdata:match("CMAKE_EXE_LINKER_FLAGS is (.-)\n") or " "
+            cmake_default_flags.ldflags = cmake_default_flags.ldflags .. " " .. outdata:match(format("CMAKE_EXE_LINKER_FLAGS_%s is (.-)\n", buildtype))
+            cmake_default_flags.shflags = outdata:match("CMAKE_SHARED_LINKER_FLAGS is (.-)\n") or " "
+            cmake_default_flags.shflags = cmake_default_flags.shflags .. " " .. outdata:match(format("CMAKE_SHARED_LINKER_FLAGS_%s is (.-)\n", buildtype))
+            cmake_default_flags.arflags = outdata:match("CMAKE_STATIC_LINKER_FLAGS is (.-)\n") or " "
+            cmake_default_flags.arflags = cmake_default_flags.arflags .. " " ..outdata:match(format("CMAKE_STATIC_LINKER_FLAGS_%s is (.-)\n", buildtype))
+
+            _g.cmake_default_flags = _g.cmake_default_flags or {}
+            _g.cmake_default_flags[cachekey] = cmake_default_flags
+        end
+        os.rm(tmpdir)
+    end
+    return cmake_default_flags
+end
+
+function _get_cmake_buildtype(package)
+    local cmake_buildtype_map = {
+        debug = "DEBUG",
+        release = "RELEASE",
+        releasedbg = "RELWITHDEBINFO"
+    }
+    local buildtype = package:mode()
+    return cmake_buildtype_map[buildtype] or "RELEASE"
+end
+
+function _get_envs_for_default_flags(package, configs, opt)
+    local buildtype = _get_cmake_buildtype(package)
+    local envs = {}
+    local default_flags = _get_default_flags(package, configs, buildtype, opt)
+    if default_flags then
+        if not opt.cxxflags and not opt.cxflags then
+            envs[format("CMAKE_CXX_FLAGS_%s", buildtype)] = default_flags.cxxflags
+        end
+        if not opt.cflags and not opt.cxflags then
+            envs[format("CMAKE_C_FLAGS_%s", buildtype)] = default_flags.cflags
+        end
+        if not opt.ldflags then
+            envs[format("CMAKE_EXE_LINKER_FLAGS_%s", buildtype)] = default_flags.ldflags
+        end
+        if not opt.arflags then
+            envs[format("CMAKE_STATIC_LINKER_FLAGS_%s", buildtype)] = default_flags.arflags
+        end
+        if not opt.shflags then
+            envs[format("CMAKE_SHARED_LINKER_FLAGS_%s", buildtype)] = default_flags.shflags
+        end
+    end
+    return envs
+end
+
+function _get_envs_for_runtime_flags(package, configs, opt)
+    local buildtype = _get_cmake_buildtype(package)
+    local envs = {}
+    local runtimes = package:runtimes()
+    if runtimes then
+        local fake_target = {is_shared = function(_) return false end,
+                             sourcekinds = function(_) return "cc" end}
+        envs[format("CMAKE_C_FLAGS_%s", buildtype)]             = _map_compflags(fake_target, "c", "runtime", runtimes)
+        fake_target.sourcekinds = function(_) return "cxx" end
+        envs[format("CMAKE_CXX_FLAGS_%s", buildtype)]           = _map_compflags(fake_target, "cxx", "runtime", runtimes)
+        envs[format("CMAKE_EXE_LINKER_FLAGS_%s", buildtype)]    = _map_linkflags(fake_target, "binary", {"cxx"}, "runtime", runtimes)
+        envs[format("CMAKE_STATIC_LINKER_FLAGS_%s", buildtype)] = _map_linkflags(fake_target, "static", {"cxx"}, "runtime", runtimes)
+        fake_target.is_shared = function(_) return true end
+        envs[format("CMAKE_SHARED_LINKER_FLAGS_%s", buildtype)] = _map_linkflags(fake_target, "shared", {"cxx"}, "runtime", runtimes)
+    end
+    return envs
+end
+
 function _get_configs(package, configs, opt)
     configs = configs or {}
     opt._configs_str = string.serialize(configs, {indent = false, strip = true})
@@ -768,6 +863,15 @@ function _get_configs(package, configs, opt)
     else
         _get_configs_for_generic(package, configs, opt)
     end
+    local envs = _get_envs_for_default_flags(package, configs, opt)
+    local runtime_envs = _get_envs_for_runtime_flags(package, configs, opt)
+    if runtime_envs then
+        envs = envs or {}
+        for name, value in pairs(runtime_envs) do
+            envs[name] = (envs[name] or " ") .. " " .. table.concat(value, " ")
+        end
+    end
+    _insert_configs_from_envs(configs, envs or {}, opt)
     return configs
 end
 
@@ -1105,4 +1209,3 @@ function install(package, configs, opt)
     end
     os.cd(oldir)
 end
-
