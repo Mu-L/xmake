@@ -1,3 +1,0 @@
-    <Object Include="$(XmakeProjectDir)\#path#">
-      <Filter>#dir#</Filter>
-    </Object>

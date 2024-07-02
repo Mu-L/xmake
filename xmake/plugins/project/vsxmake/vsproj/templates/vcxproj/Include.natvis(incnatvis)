@@ -1,3 +1,0 @@
-    <Natvis Include="$(XmakeProjectDir)\#path#">
-      <FileType>Document</FileType>
-    </Natvis>

@@ -22,7 +22,7 @@
 toolchain("icc")
 
     -- set homepage
-    set_homepage("https://software.intel.com/content/www/us/en/develop/tools/compilers/c-compilers.html")
+    set_homepage("https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler.html")
     set_description("Intel C/C++ Compiler")
 
     -- mark as standalone toolchain

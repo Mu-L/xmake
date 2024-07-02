@@ -24,7 +24,11 @@ local tty = tty or {}
 -- load modules
 local io = require("base/io")
 
--- @see http://www.termsys.demon.co.uk/vtansi.htm
+-- save metatable and builtin functions
+tty._term_mode = tty._term_mode or tty.term_mode
+
+-- @see https://www2.ccs.neu.edu/research/gpc/VonaUtils/vona/terminal/vtansi.htm
+-- http://www.termsys.demon.co.uk/vtansi.htm
 
 -- write control characters
 function tty._iowrite(...)
@@ -53,61 +57,81 @@ end
 
 -- erases from the current cursor position to the end of the current line.
 function tty.erase_line_to_end()
-    tty._iowrite("\x1b[K")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[K")
+    end
     return tty
 end
 
 -- erases from the current cursor position to the start of the current line.
 function tty.erase_line_to_start()
-    tty._iowrite("\x1b[1K")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[1K")
+    end
     return tty
 end
 
 -- erases the entire current line
 function tty.erase_line()
-    tty._iowrite("\x1b[2K")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[2K")
+    end
     return tty
 end
 
 -- erases the screen from the current line down to the bottom of the screen.
 function tty.erase_down()
-    tty._iowrite("\x1b[J")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[J")
+    end
     return tty
 end
 
 -- erases the screen from the current line up to the top of the screen.
 function tty.erase_up()
-    tty._iowrite("\x1b[1J")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[1J")
+    end
     return tty
 end
 
 -- erases the screen with the background colour and moves the cursor to home.
 function tty.erase_screen()
-    tty._iowrite("\x1b[2J")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[2J")
+    end
     return tty
 end
 
 -- save current cursor position.
 function tty.cursor_save()
-    tty._iowrite("\x1b[s")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[s")
+    end
     return tty
 end
 
 -- restores cursor position after a save cursor.
 function tty.cursor_restore()
-    tty._iowrite("\x1b[u")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[u")
+    end
     return tty
 end
 
 -- save current cursor position and color attrs
 function tty.cursor_and_attrs_save()
-    tty._iowrite("\x1b7")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b7")
+    end
     return tty
 end
 
 -- restores cursor position and color attrs after a save cursor.
 function tty.cursor_and_attrs_restore()
-    tty._iowrite("\x1b8")
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b8")
+    end
     return tty
 end
 
@@ -125,6 +149,41 @@ function tty.flush()
     return tty
 end
 
+-- get shell name
+function tty.shell()
+    local shell = tty._SHELL
+    if shell == nil then
+        local subhost = xmake._SUBHOST
+        if subhost == "windows" then
+            if os.getenv("PROMPT") then
+                shell = "cmd"
+            else
+                local ok, result = os.iorun("pwsh -v")
+                if ok then
+                    shell = "pwsh"
+                else
+                    shell = "powershell"
+                end
+            end
+        else
+            shell = os.getenv("XMAKE_SHELL")
+            if not shell then
+                shell = os.getenv("SHELL")
+                if shell then
+                    for _, shellname in ipairs({"zsh", "bash", "sh"}) do
+                        if shell:find(shellname) then
+                            shell = shellname
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        tty._SHELL = shell or "sh"
+    end
+    return tty._SHELL
+end
+
 -- get terminal name
 --  - xterm
 --  - cmd
@@ -132,6 +191,7 @@ end
 --  - vscode (in vscode)
 --  - msys2
 --  - cygwin
+--  - pwsh
 --  - powershell
 --  - mintty
 --  - windows-terminal
@@ -179,11 +239,8 @@ function tty.term()
                     term = "vstudio"
                 elseif os.getenv("WT_SESSION") then
                     term = "windows-terminal"
-                elseif os.getenv("PROMPT") then -- $PROMPT == "$P$G"
-                    term = "cmd"
                 else
-                    -- TODO maybe powershell if no $PROMPT, we need improve it
-                    term = "powershell"
+                    term = tty.shell()
                 end
             elseif subhost == "msys" then
                 term = "msys2"
@@ -195,7 +252,7 @@ function tty.term()
         end
         tty._TERM = term or "unknown"
     end
-    return term
+    return tty._TERM
 end
 
 -- has emoji?
@@ -210,8 +267,8 @@ function tty.has_emoji()
             has_emoji = false
         end
 
-        -- on msys2/cygwin? disable it
-        if has_emoji == nil and (term == "msys2" or term == "cygwin") then
+        -- on msys2/cygwin/powershell? disable it
+        if has_emoji == nil and (term == "msys2" or term == "cygwin" or term == "powershell") then
             has_emoji = false
         end
 
@@ -222,6 +279,11 @@ function tty.has_emoji()
         tty._HAS_EMOJI = has_emoji or false
     end
     return has_emoji
+end
+
+-- has vtansi?
+function tty.has_vtansi()
+    return tty.has_color8()
 end
 
 -- has 8 colors?
@@ -360,6 +422,25 @@ function tty.has_color24()
         tty._HAS_COLOR24 = has_color24 or false
     end
     return has_color24
+end
+
+-- get term mode, e.g. stdin, stdout, stderr
+--
+-- local oldmode = tty.term_mode(stdtype)
+-- local oldmode = tty.term_mode(stdtype, newmode)
+--
+function tty.term_mode(stdtype, newmode)
+    local oldmode = 0
+    if tty._term_mode then
+        if stdtype == "stdin" then
+            oldmode = tty._term_mode(1, newmode)
+        elseif stdtype == "stdout" then
+            oldmode = tty._term_mode(2, newmode)
+        elseif stdtype == "stderr" then
+            oldmode = tty._term_mode(3, newmode)
+        end
+    end
+    return oldmode
 end
 
 -- return module

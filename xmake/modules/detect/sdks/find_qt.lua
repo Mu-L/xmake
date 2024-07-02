@@ -21,6 +21,7 @@
 -- imports
 import("lib.detect.find_file")
 import("lib.detect.find_tool")
+import("core.base.semver")
 import("core.base.option")
 import("core.base.global")
 import("core.project.config")
@@ -35,7 +36,10 @@ function _find_sdkdir(sdkdir, sdkver)
         table.insert(subdirs, path.join(sdkver or "*", is_arch("x86_64") and "gcc_64" or "gcc_32", "bin"))
         table.insert(subdirs, path.join(sdkver or "*", is_arch("x86_64") and "clang_64" or "clang_32", "bin"))
     elseif is_plat("macosx") then
+        table.insert(subdirs, path.join(sdkver or "*", "macos", "bin")) -- for Qt 6.2
         table.insert(subdirs, path.join(sdkver or "*", is_arch("x86_64") and "clang_64" or "clang_32", "bin"))
+    elseif is_plat("iphoneos") then
+        table.insert(subdirs, path.join(sdkver or "*", "ios", "bin"))
     elseif is_plat("windows") then
         local vs = config.get("vs")
         if vs then
@@ -62,7 +66,7 @@ function _find_sdkdir(sdkdir, sdkver)
         end
         table.insert(subdirs, path.join(sdkver or "*", "android", "bin"))
     elseif is_plat("wasm") then
-        table.insert(subdirs, path.join(sdkver or "*", "wasm_32", "bin"))
+        table.insert(subdirs, path.join(sdkver or "*", "wasm_*", "bin"))
     else
         table.insert(subdirs, path.join(sdkver or "*", "*", "bin"))
     end
@@ -75,6 +79,14 @@ function _find_sdkdir(sdkdir, sdkver)
         table.insert(paths, sdkdir)
     end
     if is_host("windows") then
+
+        -- we find it from /mingw64 first
+        if is_subhost("msys") then
+            local mingw_prefix = os.getenv("MINGW_PREFIX")
+            if mingw_prefix and os.isdir(mingw_prefix) then
+                table.insert(paths, mingw_prefix)
+            end
+        end
 
         -- add paths from registry
         local regs =
@@ -107,25 +119,71 @@ function _find_sdkdir(sdkdir, sdkver)
             end
         end
     else
-        table.insert(paths, "~/Qt")
-        table.insert(paths, "~/Qt*")
+        for _, dir in ipairs(os.dirs("~/Qt*")) do
+            table.insert(paths, dir)
+        end
+    end
+
+    -- special case for android on windows, where qmake is a .bat from version 6.3
+    -- this case also applys to wasm
+    if is_host("windows") and is_plat("android", "wasm") then
+        local qmake = find_file("qmake.bat", paths, {suffixes = subdirs})
+        if qmake then
+            return path.directory(path.directory(qmake)), qmake
+        end
     end
 
     -- attempt to find qmake
-    local qmake = find_file(is_host("windows") and "qmake.exe" or "qmake", paths, {suffixes = subdirs})
+    local qmake
+    if is_host("windows") then
+        qmake = find_file("qmake.exe", paths, {suffixes = subdirs})
+    else
+        -- @see https://github.com/xmake-io/xmake/issues/4881
+        if sdkver then
+            local major = sdkver:sub(1, 1)
+            qmake = find_file("qmake" .. major, paths, {suffixes = subdirs})
+        end
+        if not qmake then
+            qmake = find_file("qmake", paths, {suffixes = subdirs})
+        end
+    end
     if qmake then
-        return path.directory(path.directory(qmake))
+        return path.directory(path.directory(qmake)), qmake
     end
 end
 
 -- find qmake
 function _find_qmake(sdkdir, sdkver)
 
-    -- find qt directory
-    sdkdir = _find_sdkdir(sdkdir, sdkver)
+    -- we attempt to find qmake from qt sdkdir first
+    local sdkdir, qmakefile = _find_sdkdir(sdkdir, sdkver)
+    if qmakefile then
+        return qmakefile
+    end
 
-    -- get the bin directory
-    local qmake = find_tool("qmake", {paths = sdkdir and path.join(sdkdir, "bin")})
+    -- try finding qmake with the specific version, e.g. /usr/bin/qmake6
+    -- https://github.com/xmake-io/xmake/pull/3555
+    local qmake
+    if sdkver then
+        sdkver = semver.try_parse(sdkver)
+        if sdkver then
+            local cachekey = "qmake-" .. sdkver:major()
+            qmake = find_tool("qmake", {program = "qmake" .. sdkver:major(), cachekey = cachekey, paths = sdkdir and path.join(sdkdir, "bin")})
+        end
+    end
+
+    -- we need to find the default qmake in current system
+    -- maybe we only installed qmake6
+    if not qmake then
+        local suffixes = {"", "6", "-qt5"}
+        for _, suffix in ipairs(suffixes) do
+            local cachekey = "qmake-" .. suffix
+            qmake = find_tool("qmake", {program = "qmake" .. suffix, cachekey = cachekey, paths = sdkdir and path.join(sdkdir, "bin")})
+            if qmake then
+                break
+            end
+        end
+    end
     if qmake then
         return qmake.program
     end
@@ -133,19 +191,15 @@ end
 
 -- get qt environment
 function _get_qtenvs(qmake)
-    local envs = _g._ENVS
-    if not envs then
-        envs = {}
-        local results = try {function () return os.iorunv(qmake, {"-query"}) end}
-        if results then
-            for _, qtenv in ipairs(results:split('\n', {plain = true})) do
-                local kv = qtenv:split(':', {plain = true, limit = 2}) -- @note set limit = 2 for supporting value with win-style path, e.g. `key:C:\xxx`
-                if #kv == 2 then
-                    envs[kv[1]] = kv[2]:trim()
-                end
+    local envs = {}
+    local results = try {function () return os.iorunv(qmake, {"-query"}) end}
+    if results then
+        for _, qtenv in ipairs(results:split('\n', {plain = true})) do
+            local kv = qtenv:split(':', {plain = true, limit = 2}) -- @note set limit = 2 for supporting value with win-style path, e.g. `key:C:\xxx`
+            if #kv == 2 then
+                envs[kv[1]] = kv[2]:trim()
             end
         end
-        _g._ENVS = envs
     end
     return envs
 end
@@ -169,12 +223,32 @@ function _find_qt(sdkdir, sdkver)
     sdkdir = qtenvs.QT_INSTALL_PREFIX
     local sdkver = qtenvs.QT_VERSION
     local bindir = qtenvs.QT_INSTALL_BINS
+    local libexecdir = qtenvs.QT_INSTALL_LIBEXECS
     local qmldir = qtenvs.QT_INSTALL_QML
     local libdir = qtenvs.QT_INSTALL_LIBS
     local pluginsdir = qtenvs.QT_INSTALL_PLUGINS
     local includedir = qtenvs.QT_INSTALL_HEADERS
-    local mkspecsdir = path.join(qtenvs.QT_INSTALL_ARCHDATA, "mkspecs")
-    return {sdkdir = sdkdir, bindir = bindir, libdir = libdir, includedir = includedir, qmldir = qmldir, pluginsdir = pluginsdir, mkspecsdir = mkspecsdir, sdkver = sdkver}
+    local mkspecsdir = qtenvs.QMAKE_MKSPECS or path.join(qtenvs.QT_INSTALL_ARCHDATA, "mkspecs")
+    -- for 6.2
+    local bindir_host = qtenvs.QT_HOST_BINS
+    if not bindir_host and libexecdir and is_plat("android", "iphoneos") then
+        local rootdir = path.directory(path.directory(bindir))
+        if is_host("macosx") then
+            bindir_host = path.join(rootdir, "macos", "bin")
+        else
+            -- TODO
+        end
+    end
+    local libexecdir_host = qtenvs.QT_HOST_LIBEXECS
+    if not libexecdir_host and libexecdir and is_plat("android", "iphoneos") then
+        local rootdir = path.directory(path.directory(libexecdir))
+        if is_host("macosx") then
+            libexecdir_host = path.join(rootdir, "macos", "libexec")
+        else
+            -- TODO
+        end
+    end
+    return {sdkdir = sdkdir, bindir = bindir, bindir_host = bindir_host, libexecdir = libexecdir, libexecdir_host = libexecdir_host, libdir = libdir, includedir = includedir, qmldir = qmldir, pluginsdir = pluginsdir, mkspecsdir = mkspecsdir, sdkver = sdkver}
 end
 
 -- find qt sdk toolchains

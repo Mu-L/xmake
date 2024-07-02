@@ -19,7 +19,7 @@ end
 if os.isfile("/etc/redhat-release") then
     jit = false
 end
-local autogendir = path.join("autogen", plat, jit and "jit" or "nojit", arch)
+local autogendir = path.join("luajit", "autogen", plat, jit and "jit" or "nojit", arch)
 
 -- add target
 target("luajit")
@@ -52,6 +52,8 @@ target("luajit")
         add_files(autogendir .. "/*.S")
     end
 
+    add_defines("USE_LUAJIT", {interface = true})
+
     -- disable jit compiler?
     if not jit then
         add_defines("LUAJIT_DISABLE_JIT")
@@ -75,4 +77,4 @@ target("luajit")
         add_cflags("-Wno-error=unused-function")
     end]]
 
-       
+

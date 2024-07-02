@@ -44,7 +44,16 @@ function main(opt)
     local git = assert(find_tool("git"), "git not found!")
 
     -- init argv
-    local argv = {"clean", "-d"}
+    local argv = {}
+    if opt.fsmonitor then
+        table.insert(argv, "-c")
+        table.insert(argv, "core.fsmonitor=true")
+    else
+        table.insert(argv, "-c")
+        table.insert(argv, "core.fsmonitor=false")
+    end
+    table.insert(argv, "clean")
+    table.insert(argv, "-d")
 
     -- verbose?
     if not option.get("verbose") then
@@ -61,17 +70,6 @@ function main(opt)
         table.insert(argv, "-x")
     end
 
-    -- enter repository directory
-    local oldir = nil
-    if opt.repodir then
-        oldir = os.cd(opt.repodir)
-    end
-
     -- clean it
-    os.vrunv(git.program, argv)
-
-    -- leave repository directory
-    if oldir then
-        os.cd(oldir)
-    end
+    os.vrunv(git.program, argv, {curdir = opt.repodir})
 end

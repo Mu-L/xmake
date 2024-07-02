@@ -23,11 +23,12 @@ local scopeinfo = scopeinfo or {}
 local _instance = _instance or {}
 
 -- load modules
-local io    = require("base/io")
-local os    = require("base/os")
-local path  = require("base/path")
-local table = require("base/table")
-local utils = require("base/utils")
+local io         = require("base/io")
+local os         = require("base/os")
+local path       = require("base/path")
+local table      = require("base/table")
+local utils      = require("base/utils")
+local deprecated = require("base/deprecated")
 
 -- new an instance
 function _instance.new(kind, info, opt)
@@ -35,8 +36,8 @@ function _instance.new(kind, info, opt)
     local instance = table.inherit(_instance)
     instance._KIND = kind or "root"
     instance._INFO = info
-    instance._INTERPRETER   = opt.interpreter
-    instance._REMOVE_REPEAT = opt.remove_repeat
+    instance._INTERPRETER = opt.interpreter
+    instance._DEDUPLICATE = opt.deduplicate
     instance._ENABLE_FILTER = opt.enable_filter
     return instance
 end
@@ -58,13 +59,17 @@ function _instance:_api_type(name)
 end
 
 -- handle the api values
-function _instance:_api_handle(values)
+function _instance:_api_handle(name, values)
     local interp = self:interpreter()
     if interp then
 
-        -- remove repeat first for each slice with deleted item (__del_xxx)
-        if self._REMOVE_REPEAT and not table.is_dictionary(values) then
-            values = table.unique(values, function (v) return type(v) == "string" and v:startswith("__del_") end)
+        -- remove repeat first for each slice with deleted item (__remove_xxx)
+        if self._DEDUPLICATE and not table.is_dictionary(values) then
+            local policy = interp:deduplication_policy(name)
+            if policy ~= false then
+                local unique_func = policy == "toleft" and table.reverse_unique or table.unique
+                values = unique_func(values, function (v) return type(v) == "string" and v:startswith("__remove_") end)
+            end
         end
 
         -- filter values
@@ -108,14 +113,24 @@ function _instance:_api_set_values(name, ...)
         extra_config = nil
     end
 
-    -- expand values
-    values = table.join(unpack(values))
+    -- @note we need to mark table value as meta object to avoid wrap/unwrap
+    -- if these values cannot be expanded, especially when there is only one value
+    --
+    -- e.g. target:set("shflags", {"-Wl,-exported_symbols_list", exportfile}, {force = true, expand = false})
+    if extra_config and extra_config.expand == false then
+        for _, value in ipairs(values) do
+            table.wrap_lock(value)
+        end
+    else
+        -- expand values
+        values = table.join(table.unpack(values))
+    end
 
     -- handle values
-    local handled_values = self:_api_handle(values)
+    local handled_values = self:_api_handle(name, values)
 
     -- save values
-    if type(handled_values) == "table" and #handled_values == 0 then
+    if type(handled_values) == "table" and table.empty(handled_values) then
         -- set("xx", nil)? remove it
         scope[name] = nil
     else
@@ -147,11 +162,21 @@ function _instance:_api_add_values(name, ...)
         extra_config = nil
     end
 
-    -- expand values
-    values = table.join(unpack(values))
+    -- @note we need to mark table value as meta object to avoid wrap/unwrap
+    -- if these values cannot be expanded, especially when there is only one value
+    --
+    -- e.g. target:add("shflags", {"-Wl,-exported_symbols_list", exportfile}, {force = true, expand = false})
+    if extra_config and extra_config.expand == false then
+        for _, value in ipairs(values) do
+            table.wrap_lock(value)
+        end
+    else
+        -- expand values
+        values = table.join(table.unpack(values))
+    end
 
     -- save values
-    scope[name] = self:_api_handle(table.join2(table.wrap(scope[name]), values))
+    scope[name] = self:_api_handle(name, table.join2(table.wrap(scope[name]), values))
 
     -- save extra config
     if extra_config then
@@ -160,6 +185,74 @@ function _instance:_api_add_values(name, ...)
         for _, value in ipairs(values) do
             extrascope[value] = extra_config
         end
+    end
+end
+
+-- set the api groups to the scope info
+function _instance:_api_set_groups(name, ...)
+
+    -- get the scope info
+    local scope = self._INFO
+
+    -- get extra config
+    local values = {...}
+    local extra_config = values[#values]
+    if table.is_dictionary(extra_config) then
+        table.remove(values)
+    else
+        extra_config = nil
+    end
+
+    -- expand values
+    values = table.join(table.unpack(values))
+
+    -- save values
+    table.wrap_lock(values)
+    scope[name] = values
+    scope[name] = self:_api_handle(name, scope[name])
+
+    -- save extra config
+    if extra_config then
+        scope["__extra_" .. name] = scope["__extra_" .. name] or {}
+        local extrascope = scope["__extra_" .. name]
+        local key = table.concat(values, "_")
+        extrascope[key] = extra_config
+    end
+end
+
+-- add the api groups to the scope info
+function _instance:_api_add_groups(name, ...)
+
+    -- get the scope info
+    local scope = self._INFO
+
+    -- get extra config
+    local values = {...}
+    local extra_config = values[#values]
+    if table.is_dictionary(extra_config) then
+        table.remove(values)
+    else
+        extra_config = nil
+    end
+
+    -- expand values
+    values = table.join(table.unpack(values))
+
+    -- save values
+    --
+    -- @note maybe scope[name] has been unwrapped, we need wrap it first
+    -- https://github.com/xmake-io/xmake/issues/4428
+    scope[name] = table.wrap(scope[name])
+    table.wrap_lock(values)
+    table.insert(scope[name], values)
+    scope[name] = self:_api_handle(name, scope[name])
+
+    -- save extra config
+    if extra_config then
+        scope["__extra_" .. name] = scope["__extra_" .. name] or {}
+        local extrascope = scope["__extra_" .. name]
+        local key = table.concat(values, "_")
+        extrascope[key] = extra_config
     end
 end
 
@@ -180,7 +273,7 @@ function _instance:_api_set_keyvalues(name, key, ...)
 
     -- save values to "name"
     scope[name] = scope[name] or {}
-    scope[name][key] = self:_api_handle(values)
+    scope[name][key] = self:_api_handle(name, values)
 
     -- save values to "name.key"
     local name_key = name .. "." .. key
@@ -218,9 +311,9 @@ function _instance:_api_add_keyvalues(name, key, ...)
     -- save values to "name"
     scope[name] = scope[name] or {}
     if scope[name][key] == nil then
-        scope[name][key] = self:_api_handle(values)
+        scope[name][key] = self:_api_handle(name, values)
     else
-        scope[name][key] = self:_api_handle(table.join2(table.wrap(scope[name][key]), values))
+        scope[name][key] = self:_api_handle(name, table.join2(table.wrap(scope[name][key]), values))
     end
 
     -- save values to "name.key"
@@ -238,7 +331,7 @@ function _instance:_api_add_keyvalues(name, key, ...)
 end
 
 -- set the api dictionary to the scope info
-function _instance:_api_set_dictionary(name, dict_or_key, value)
+function _instance:_api_set_dictionary(name, dict_or_key, value, extra_config)
 
     -- get the scope info
     local scope = self._INFO
@@ -247,11 +340,17 @@ function _instance:_api_set_dictionary(name, dict_or_key, value)
     if type(dict_or_key) == "table" then
         local dict = {}
         for k, v in pairs(dict_or_key) do
-            dict[k] = self:_api_handle(v)
+            dict[k] = self:_api_handle(name, v)
         end
         scope[name] = dict
     elseif type(dict_or_key) == "string" and value ~= nil then
-        scope[name] = {[dict_or_key] = self:_api_handle(value)}
+        scope[name] = {[dict_or_key] = self:_api_handle(name, value)}
+        -- save extra config
+        if extra_config and table.is_dictionary(extra_config) then
+            scope["__extra_" .. name] = scope["__extra_" .. name] or {}
+            local extrascope = scope["__extra_" .. name]
+            extrascope[dict_or_key] = extra_config
+        end
     else
         -- error
         os.raise("%s:set(%s, ...): invalid value type!", self:kind(), name, type(dict))
@@ -259,7 +358,7 @@ function _instance:_api_set_dictionary(name, dict_or_key, value)
 end
 
 -- add the api dictionary to the scope info
-function _instance:_api_add_dictionary(name, dict_or_key, value)
+function _instance:_api_add_dictionary(name, dict_or_key, value, extra_config)
 
     -- get the scope info
     local scope = self._INFO
@@ -269,11 +368,17 @@ function _instance:_api_add_dictionary(name, dict_or_key, value)
     if type(dict_or_key) == "table" then
         local dict = {}
         for k, v in pairs(dict_or_key) do
-            dict[k] = self:_api_handle(v)
+            dict[k] = self:_api_handle(name, v)
         end
         table.join2(scope[name], dict)
     elseif type(dict_or_key) == "string" and value ~= nil then
-        scope[name][dict_or_key] = self:_api_handle(value)
+        scope[name][dict_or_key] = self:_api_handle(name, value)
+        -- save extra config
+        if extra_config and table.is_dictionary(extra_config) then
+            scope["__extra_" .. name] = scope["__extra_" .. name] or {}
+            local extrascope = scope["__extra_" .. name]
+            extrascope[dict_or_key] = extra_config
+        end
     else
         -- error
         os.raise("%s:add(%s, ...): invalid value type!", self:kind(), name, type(dict))
@@ -299,13 +404,13 @@ function _instance:_api_set_paths(name, ...)
     end
 
     -- expand values
-    values = table.join(unpack(values))
+    values = table.join(table.unpack(values))
 
     -- translate paths
     local paths = interp:_api_translate_paths(values, "set_" .. name, 5)
 
     -- save values
-    scope[name] = self:_api_handle(paths)
+    scope[name] = self:_api_handle(name, paths)
 
     -- save extra config
     if extra_config then
@@ -339,13 +444,13 @@ function _instance:_api_add_paths(name, ...)
     end
 
     -- expand values
-    values = table.join(unpack(values))
+    values = table.join(table.unpack(values))
 
     -- translate paths
     local paths = interp:_api_translate_paths(values, "add_" .. name, 5)
 
     -- save values
-    scope[name] = self:_api_handle(table.join2(table.wrap(scope[name]), paths))
+    scope[name] = self:_api_handle(name, table.join2(table.wrap(scope[name]), paths))
 
     -- save extra config
     if extra_config then
@@ -360,7 +465,7 @@ function _instance:_api_add_paths(name, ...)
     self:_api_save_sourceinfo_to_scope(scope, name, paths)
 end
 
--- remove the api paths to the scope info
+-- remove the api paths to the scope info (deprecated)
 function _instance:_api_del_paths(name, ...)
 
     -- get the scope info
@@ -372,17 +477,48 @@ function _instance:_api_del_paths(name, ...)
     -- expand values
     values = table.join(...)
 
+    -- it has been marked as deprecated
+    deprecated.add("remove_" .. name .. "(%s)", "del_" .. name .. "(%s)", table.concat(values, ", "), table.concat(values, ", "))
+
     -- translate paths
     local paths = interp:_api_translate_paths(values, "del_" .. name, 5)
 
     -- mark these paths as deleted
     local paths_deleted = {}
     for _, pathname in ipairs(paths) do
-        table.insert(paths_deleted, "__del_" .. pathname)
+        table.insert(paths_deleted, "__remove_" .. pathname)
     end
 
     -- save values
-    scope[name] = self:_api_handle(table.join2(table.wrap(scope[name]), paths_deleted))
+    scope[name] = self:_api_handle(name, table.join2(table.wrap(scope[name]), paths_deleted))
+
+    -- save api source info, e.g. call api() in sourcefile:linenumber
+    self:_api_save_sourceinfo_to_scope(scope, name, paths)
+end
+
+-- remove the api paths to the scope info
+function _instance:_api_remove_paths(name, ...)
+
+    -- get the scope info
+    local scope = self._INFO
+
+    -- get interpreter
+    local interp = self:interpreter()
+
+    -- expand values
+    values = table.join(...)
+
+    -- translate paths
+    local paths = interp:_api_translate_paths(values, "remove_" .. name, 5)
+
+    -- mark these paths as removed
+    local paths_removed = {}
+    for _, pathname in ipairs(paths) do
+        table.insert(paths_removed, "__remove_" .. pathname)
+    end
+
+    -- save values
+    scope[name] = self:_api_handle(name, table.join2(table.wrap(scope[name]), paths_removed))
 
     -- save api source info, e.g. call api() in sourcefile:linenumber
     self:_api_save_sourceinfo_to_scope(scope, name, paths)
@@ -439,7 +575,7 @@ function _instance:apival_set(name, ...)
         local array = name
         for _, dict in ipairs(array) do
             for k, v in pairs(dict) do
-                self:apival_set(k, unpack(table.wrap(v)))
+                self:apival_set(k, table.unpack(table.wrap(v)))
             end
         end
 
@@ -447,7 +583,7 @@ function _instance:apival_set(name, ...)
     elseif table.is_dictionary(name) then
         local dict = name
         for k, v in pairs(dict) do
-            self:apival_set(k, unpack(table.wrap(v)))
+            self:apival_set(k, table.unpack(table.wrap(v)))
         end
     elseif name ~= nil then
         os.raise("unknown type(%s) for %s:set(%s, ...)", type(name), self:kind(), name)
@@ -475,7 +611,7 @@ function _instance:apival_add(name, ...)
         local array = name
         for _, dict in ipairs(array) do
             for k, v in pairs(dict) do
-                self:apival_add(k, unpack(table.wrap(v)))
+                self:apival_add(k, table.unpack(table.wrap(v)))
             end
         end
 
@@ -483,19 +619,19 @@ function _instance:apival_add(name, ...)
     elseif table.is_dictionary(name) then
         local dict = name
         for k, v in pairs(dict) do
-            self:apival_add(k, unpack(table.wrap(v)))
+            self:apival_add(k, table.unpack(table.wrap(v)))
         end
     elseif name ~= nil then
         os.raise("unknown type(%s) for %s:add(%s, ...)", type(name), self:kind(), name)
     end
 end
 
--- remove the api values to the scope info
+-- remove the api values to the scope info (deprecated)
 function _instance:apival_del(name, ...)
     if type(name) == "string" then
         local api_type = self:_api_type("del_" .. name)
         if api_type then
-            local del_xxx = self["_api_del_" .. api_type]
+            local del_xxx = self["_api_remove_" .. api_type]
             if del_xxx then
                 del_xxx(self, name, ...)
             else
@@ -503,6 +639,26 @@ function _instance:apival_del(name, ...)
             end
         else
             os.raise("unknown api(%s) for %s:del(%s, ...)", name, self:kind(), name)
+        end
+    elseif name ~= nil then
+        -- TODO
+        os.raise("cannot support to remove a dictionary!")
+    end
+end
+
+-- remove the api values to the scope info
+function _instance:apival_remove(name, ...)
+    if type(name) == "string" then
+        local api_type = self:_api_type("remove_" .. name)
+        if api_type then
+            local remove_xxx = self["_api_remove_" .. api_type]
+            if remove_xxx then
+                remove_xxx(self, name, ...)
+            else
+                os.raise("unknown apitype(%s) for %s:remove(%s, ...)", api_type, self:kind(), name)
+            end
+        else
+            os.raise("unknown api(%s) for %s:remove(%s, ...)", name, self:kind(), name)
         end
     elseif name ~= nil then
         -- TODO
@@ -542,6 +698,9 @@ function _instance:extraconf(name, item, key)
     local value = extraconf
     if item then
         value = extraconf and extraconf[item] or nil
+        if value == nil and extraconf and type(item) == "table" then
+            value = extraconf[table.concat(item, "_")]
+        end
         if value and key then
             value = value[key]
         end
@@ -576,9 +735,23 @@ function _instance:extraconf_set(name, item, key, value)
     end
 end
 
+-- get configuration source information of the given api item
+--
+-- e.g.
+-- self:get("defines", "TEST")
+--  - add_defines("TEST")
+--    - src/xmake.lua:10
+--
+function _instance:sourceinfo(name, item)
+    return (self:get("__sourceinfo_" .. name) or {})[item]
+end
+
 -- clone a new instance from the current
 function _instance:clone()
-    return _instance.new(self:kind(), self:info(), {interpreter = self:interpreter(), remove_repeat = self._REMOVE_REPEAT, enable_filter = self._ENABLE_FILTER})
+    return _instance.new(self:kind(), table.clone(self:info(), 3), { -- @note we need do deep clone
+        interpreter = self:interpreter(),
+        deduplicate = self._DEDUPLICATE,
+        enable_filter = self._ENABLE_FILTER})
 end
 
 -- new a scope instance

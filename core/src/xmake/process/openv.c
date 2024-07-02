@@ -30,6 +30,9 @@
  */
 #include "prefix.h"
 #include "../io/prefix.h"
+#if defined(TB_CONFIG_OS_MACOSX) || defined(TB_CONFIG_OS_LINUX) || defined(TB_CONFIG_OS_BSD) || defined(TB_CONFIG_OS_HAIKU) || defined(TB_COMPILER_IS_MINGW)
+#   include <signal.h>
+#endif
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * implementation
@@ -60,7 +63,7 @@ tb_int_t xm_process_openv(lua_State* lua)
     tb_check_return_val(shellname, 0);
 
     // get the arguments count
-    tb_long_t argn = lua_objlen(lua, 2);
+    tb_long_t argn = (tb_long_t)lua_objlen(lua, 2);
     tb_check_return_val(argn >= 0, 0);
 
     // get arguments
@@ -82,10 +85,18 @@ tb_int_t xm_process_openv(lua_State* lua)
             // pass this argument
             argv[1 + argi] = lua_tostring(lua, -1);
         }
+        // is path instance?
+        else if (lua_istable(lua, -1))
+        {
+            lua_pushstring(lua, "_STR");
+            lua_gettable(lua, -2);
+            argv[1 + argi] = lua_tostring(lua, -1);
+            lua_pop(lua, 1);
+        }
         else
         {
             // error
-            lua_pushfstring(lua, "invalid argv[%ld] type(%s) for process.openv", argi, luaL_typename(lua, -1));
+            lua_pushfstring(lua, "invalid argv[%d] type(%s) for process.openv", (tb_int_t)argi, luaL_typename(lua, -1));
             lua_error(lua);
         }
 
@@ -97,8 +108,9 @@ tb_int_t xm_process_openv(lua_State* lua)
     tb_process_attr_t attr = {0};
 
     // get option arguments
+    tb_bool_t          exclusive = tb_false;
     tb_size_t          envn = 0;
-    tb_char_t const*   envs[256] = {0};
+    tb_char_t const*   envs[1024] = {0};
     tb_char_t const*   inpath  = tb_null;
     tb_char_t const*   outpath = tb_null;
     tb_char_t const*   errpath = tb_null;
@@ -115,6 +127,13 @@ tb_int_t xm_process_openv(lua_State* lua)
         lua_gettable(lua, 3);
         if (lua_toboolean(lua, -1))
             attr.flags |= TB_PROCESS_FLAG_DETACH;
+        lua_pop(lua, 1);
+
+        // is exclusive?
+        lua_pushstring(lua, "exclusive");
+        lua_gettable(lua, 3);
+        if (lua_toboolean(lua, -1))
+            exclusive = tb_true;
         lua_pop(lua, 1);
 
         // get curdir
@@ -220,14 +239,14 @@ tb_int_t xm_process_openv(lua_State* lua)
                     else
                     {
                         // error
-                        lua_pushfstring(lua, "envs is too large(%lu > %d) for process.openv", envn, tb_arrayn(envs) - 1);
+                        lua_pushfstring(lua, "envs is too large(%d > %d) for process.openv", (tb_int_t)envn, tb_arrayn(envs) - 1);
                         lua_error(lua);
                     }
                 }
                 else
                 {
                     // error
-                    lua_pushfstring(lua, "invalid envs[%ld] type(%s) for process.openv", i, luaL_typename(lua, -1));
+                    lua_pushfstring(lua, "invalid envs[%d] type(%s) for process.openv", (tb_int_t)i, luaL_typename(lua, -1));
                     lua_error(lua);
                 }
 
@@ -242,73 +261,83 @@ tb_int_t xm_process_openv(lua_State* lua)
     if (inpath)
     {
         // redirect stdin to file
-        attr.inpath = inpath;
-        attr.inmode = TB_FILE_MODE_RO;
-        attr.intype = TB_PROCESS_REDIRECT_TYPE_FILEPATH;
+        attr.in.path = inpath;
+        attr.inmode  = TB_FILE_MODE_RO;
+        attr.intype  = TB_PROCESS_REDIRECT_TYPE_FILEPATH;
     }
     else if (infile && xm_io_file_is_file(infile))
     {
         tb_file_ref_t rawfile = tb_null;
         if (tb_stream_ctrl(infile->stream, TB_STREAM_CTRL_FILE_GET_FILE, &rawfile) && rawfile)
         {
-            attr.infile = rawfile;
-            attr.intype = TB_PROCESS_REDIRECT_TYPE_FILE;
+            attr.in.file = rawfile;
+            attr.intype  = TB_PROCESS_REDIRECT_TYPE_FILE;
         }
     }
     else if (inpipe)
     {
-        attr.inpipe = inpipe;
-        attr.intype = TB_PROCESS_REDIRECT_TYPE_PIPE;
+        attr.in.pipe = inpipe;
+        attr.intype  = TB_PROCESS_REDIRECT_TYPE_PIPE;
     }
 
     // redirect stdout?
     if (outpath)
     {
         // redirect stdout to file
-        attr.outpath = outpath;
-        attr.outmode = TB_FILE_MODE_RW | TB_FILE_MODE_TRUNC | TB_FILE_MODE_CREAT;
-        attr.outtype = TB_PROCESS_REDIRECT_TYPE_FILEPATH;
+        attr.out.path = outpath;
+        attr.outmode  = TB_FILE_MODE_RW | TB_FILE_MODE_TRUNC | TB_FILE_MODE_CREAT;
+        attr.outtype  = TB_PROCESS_REDIRECT_TYPE_FILEPATH;
     }
     else if (outfile && xm_io_file_is_file(outfile))
     {
         tb_file_ref_t rawfile = tb_null;
         if (tb_stream_ctrl(outfile->stream, TB_STREAM_CTRL_FILE_GET_FILE, &rawfile) && rawfile)
         {
-            attr.outfile = rawfile;
-            attr.outtype = TB_PROCESS_REDIRECT_TYPE_FILE;
+            attr.out.file = rawfile;
+            attr.outtype  = TB_PROCESS_REDIRECT_TYPE_FILE;
         }
     }
     else if (outpipe)
     {
-        attr.outpipe = outpipe;
-        attr.outtype = TB_PROCESS_REDIRECT_TYPE_PIPE;
+        attr.out.pipe = outpipe;
+        attr.outtype  = TB_PROCESS_REDIRECT_TYPE_PIPE;
     }
 
     // redirect stderr?
     if (errpath)
     {
         // redirect stderr to file
-        attr.errpath = errpath;
-        attr.errmode = TB_FILE_MODE_RW | TB_FILE_MODE_TRUNC | TB_FILE_MODE_CREAT;
-        attr.errtype = TB_PROCESS_REDIRECT_TYPE_FILEPATH;
+        attr.err.path = errpath;
+        attr.errmode  = TB_FILE_MODE_RW | TB_FILE_MODE_TRUNC | TB_FILE_MODE_CREAT;
+        attr.errtype  = TB_PROCESS_REDIRECT_TYPE_FILEPATH;
     }
     else if (errfile && xm_io_file_is_file(errfile))
     {
         tb_file_ref_t rawfile = tb_null;
         if (tb_stream_ctrl(errfile->stream, TB_STREAM_CTRL_FILE_GET_FILE, &rawfile) && rawfile)
         {
-            attr.errfile = rawfile;
-            attr.errtype = TB_PROCESS_REDIRECT_TYPE_FILE;
+            attr.err.file = rawfile;
+            attr.errtype  = TB_PROCESS_REDIRECT_TYPE_FILE;
         }
     }
     else if (errpipe)
     {
-        attr.errpipe = errpipe;
-        attr.errtype = TB_PROCESS_REDIRECT_TYPE_PIPE;
+        attr.err.pipe = errpipe;
+        attr.errtype  = TB_PROCESS_REDIRECT_TYPE_PIPE;
     }
 
     // set the new environments
     if (envn > 0) attr.envp = envs;
+
+    /* we need to ignore SIGINT and SIGQUIT if we enter exclusive mode
+     * @see https://github.com/xmake-io/xmake/discussions/2893
+     */
+#if defined(SIGINT)
+    if (exclusive) signal(SIGINT, SIG_IGN);
+#endif
+#if defined(SIGQUIT)
+    if (exclusive) signal(SIGQUIT, SIG_IGN);
+#endif
 
     // init process
     tb_process_ref_t process = (tb_process_ref_t)tb_process_init(shellname, argv, &attr);

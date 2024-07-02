@@ -53,7 +53,7 @@ function _get_user_agent()
 end
 
 -- download url using curl
-function _curl_download(tool, url, outputfile)
+function _curl_download(tool, url, outputfile, opt)
 
     -- set basic arguments
     local argv = {}
@@ -64,7 +64,7 @@ function _curl_download(tool, url, outputfile)
     end
 
     -- use proxy?
-    local proxy_conf = proxy.get(url)
+    local proxy_conf = proxy.config(url)
     if proxy_conf then
         table.insert(argv, "-x")
         table.insert(argv, proxy_conf)
@@ -78,6 +78,39 @@ function _curl_download(tool, url, outputfile)
         end
         table.insert(argv, "-A")
         table.insert(argv, user_agent)
+    end
+
+    -- ignore to check ssl certificates
+    if opt.insecure then
+        table.insert(argv, "-k")
+    end
+
+    -- add custom headers
+    if opt.headers then
+        for _, header in ipairs(opt.headers) do
+            table.insert(argv, "-H")
+            table.insert(argv, header)
+        end
+    end
+
+    -- continue to download?
+    if opt.continue then
+        table.insert(argv, "-C")
+        table.insert(argv, "-")
+    end
+
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--max-time")
+        table.insert(argv, tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--speed-limit")
+        table.insert(argv, "0")
+        table.insert(argv, "--speed-time")
+        table.insert(argv, tostring(opt.read_timeout))
     end
 
     -- set url
@@ -98,7 +131,7 @@ function _curl_download(tool, url, outputfile)
 end
 
 -- download url using wget
-function _wget_download(tool, url, outputfile)
+function _wget_download(tool, url, outputfile, opt)
 
     -- ensure output directory
     local argv = {url}
@@ -108,7 +141,7 @@ function _wget_download(tool, url, outputfile)
     end
 
     -- use proxy?
-    local proxy_conf = proxy.get(url)
+    local proxy_conf = proxy.config(url)
     if proxy_conf then
         table.insert(argv, "-e")
         table.insert(argv, "use_proxy=yes")
@@ -134,6 +167,33 @@ function _wget_download(tool, url, outputfile)
         table.insert(argv, user_agent)
     end
 
+    -- ignore to check ssl certificates
+    if opt.insecure then
+        table.insert(argv, "--no-check-certificate")
+    end
+
+    -- add custom headers
+    if opt.headers then
+        for _, header in ipairs(opt.headers) do
+            table.insert(argv, "--header=" .. header)
+        end
+    end
+
+    -- continue to download?
+    if opt.continue then
+        table.insert(argv, "-c")
+    end
+
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--timeout=" .. tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--read-timeout=" .. tostring(opt.read_timeout))
+    end
+
     -- set outputfile
     table.insert(argv, "-O")
     table.insert(argv, outputfile)
@@ -146,22 +206,26 @@ end
 --
 -- @param url           the input url
 -- @param outputfile    the output file
+-- @param opt           the option, {continue = true}
 --
 --
-function main(url, outputfile)
+function main(url, outputfile, opt)
 
     -- init output file
+    opt = opt or {}
     outputfile = outputfile or path.filename(url):gsub("%?.+$", "")
 
     -- attempt to download url using curl first
     local tool = find_tool("curl", {version = true})
     if tool then
-        return _curl_download(tool, url, outputfile)
+        return _curl_download(tool, url, outputfile, opt)
     end
 
     -- download url using wget
     tool = find_tool("wget", {version = true})
     if tool then
-        return _wget_download(tool, url, outputfile)
+        return _wget_download(tool, url, outputfile, opt)
     end
+
+    assert(tool, "curl or wget not found!")
 end

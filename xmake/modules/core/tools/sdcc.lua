@@ -21,7 +21,9 @@
 -- imports
 import("core.base.option")
 import("core.base.global")
-import("private.utils.progress")
+import("core.project.policy")
+import("core.language.language")
+import("utils.progress")
 
 -- init it
 function init(self)
@@ -68,45 +70,38 @@ end
 
 -- make the warning flag
 function nf_warning(self, level)
-
-    -- the maps
     local maps =
     {
         none       = "--less-pedantic"
     ,   less       = "--less-pedantic"
     ,   error      = "-Werror"
     }
-
-    -- make it
     return maps[level]
 end
 
 -- make the optimize flag
 function nf_optimize(self, level)
-
-    -- the maps
-    local maps =
-    {
-        none       = ""
-    ,   fast       = "--opt-code-speed"
-    ,   faster     = "--opt-code-speed"
-    ,   fastest    = "--opt-code-speed"
-    ,   smallest   = "--opt-code-size"
-    ,   aggressive = "--opt-code-speed"
-    }
-
-    -- make it
-    return maps[level]
+    -- only for source kind
+    local kind = self:kind()
+    if language.sourcekinds()[kind] then
+        local maps =
+        {
+            none       = ""
+        ,   fast       = "--opt-code-speed"
+        ,   faster     = "--opt-code-speed"
+        ,   fastest    = "--opt-code-speed"
+        ,   smallest   = "--opt-code-size"
+        ,   aggressive = "--opt-code-speed"
+        }
+        return maps[level]
+    end
 end
 
 -- make the language flag
 function nf_language(self, stdname)
-
-    -- the stdc maps
     if _g.cmaps == nil then
         _g.cmaps =
         {
-            -- stdc
             ansi        = "--std-c89"
         ,   c89         = "--std-c89"
         ,   gnu89       = "--std-sdcc89"
@@ -116,14 +111,28 @@ function nf_language(self, stdname)
         ,   gnu11       = "--std-sdcc11"
         ,   c20         = "--std-c2x"
         ,   gnu20       = "--std-sdcc2x"
+        ,   clatest     = {"--std-c2x", "--std-c11", "--std-c99", "--std-c89"}
+        ,   gnulatest   = {"--std-sdcc2x", "--std-sdcc11", "--std-sdcc99", "--std-sdcc89"}
         }
     end
-    return _g.cmaps[stdname]
+    local maps = _g.cmaps
+    local result = maps[stdname]
+    if type(result) == "table" then
+        for _, v in ipairs(result) do
+            if self:has_flags(v, "cxflags") then
+                result = v
+                maps[stdname] = result
+                return result
+            end
+        end
+    else
+        return result
+    end
 end
 
 -- make the define flag
 function nf_define(self, macro)
-    return "-D" .. macro
+    return {"-D" .. macro}
 end
 
 -- make the undefine flag
@@ -163,11 +172,7 @@ end
 
 -- link the target file
 function link(self, objectfiles, targetkind, targetfile, flags)
-
-    -- ensure the target directory
     os.mkdir(path.directory(targetfile))
-
-    -- link it
     os.runv(linkargv(self, objectfiles, targetkind, targetfile, flags))
 end
 
@@ -177,7 +182,7 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
     os.mkdir(path.directory(objectfile))
@@ -209,7 +214,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
                 -- get 16 lines of errors
                 if start > 0 or not option.get("verbose") then
                     if start == 0 then start = 1 end
-                    errors = table.concat(table.slice(lines, start, start + ifelse(#lines - start > 16, 16, #lines - start)), "\n")
+                    errors = table.concat(table.slice(lines, start, start + ((#lines - start > 16) and 16 or (#lines - start))), "\n")
                 end
 
                 -- raise compiling errors
@@ -221,7 +226,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             function (ok, warnings)
 
                 -- print some warnings
-                if warnings and #warnings > 0 and (option.get("verbose") or option.get("warning") or global.get("build_warning")) then
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
                     if progress.showing_without_scroll() then
                         print("")
                     end

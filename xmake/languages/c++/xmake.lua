@@ -18,41 +18,20 @@
 -- @file        xmake.lua
 --
 
--- define language
 language("c++")
-
-    -- set source file kinds
-    set_sourcekinds {cc = ".c", cxx = {".cpp", ".cc", ".cxx"}}
-
-    -- set source file flags
-    set_sourceflags {cc = {"cflags", "cxflags"}, cxx = {"cxxflags", "cxflags"}}
-
-    -- set target kinds
+    add_rules("c++")
+    set_sourcekinds {cxx = {".cpp", ".cc", ".cxx", ".c++", ".cppm", ".ccm", ".cxxm", ".c++m", ".mpp", ".mxx", ".ixx"}}
+    set_sourceflags {cxx = {"cxxflags", "cxflags"}}
     set_targetkinds {binary = "ld", static = "ar", shared = "sh"}
-
-    -- set target flags
     set_targetflags {binary = "ldflags", static = "arflags", shared = "shflags"}
-
-    -- set language kinds
-    set_langkinds {c = "cc", cxx = "cxx"}
-
-    -- set mixing kinds
+    set_langkinds   {cxx = "cxx"}
     set_mixingkinds("cc", "cxx", "as", "mrc")
 
-    -- add rules
-    add_rules("c++")
-
-    -- on load
     on_load("load")
-
-    -- on check_main
     on_check_main("check_main")
 
-    -- set name flags
-    set_nameflags
-    {
-        object =
-        {
+    set_nameflags {
+        object = {
             "config.includedirs"
         ,   "config.frameworkdirs"
         ,   "config.frameworks"
@@ -68,8 +47,10 @@ language("c++")
         ,   "target.undefines"
         ,   "target.frameworkdirs"
         ,   "target.frameworks"
-        ,   "target.pcheader"
+        ,   "target.exceptions"
+        ,   "target.encodings"
         ,   "target.pcxxheader"
+        ,   "target.forceincludes"
         ,   "toolchain.includedirs"
         ,   "toolchain.defines"
         ,   "toolchain.undefines"
@@ -78,8 +59,7 @@ language("c++")
         ,   "target.sysincludedirs"
         ,   "toolchain.sysincludedirs"
         }
-    ,   binary =
-        {
+    ,   binary = {
             "config.linkdirs"
         ,   "config.frameworkdirs"
         ,   "target.linkdirs"
@@ -87,11 +67,13 @@ language("c++")
         ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
+        ,   "target.optimize:check"
         ,   "target.runtimes"
         ,   "toolchain.linkdirs"
         ,   "toolchain.rpathdirs"
         ,   "toolchain.frameworkdirs"
         ,   "config.links"
+        ,   "target.linkgroups" -- we must move it before target.links, because we need sort correct order for package and its deps
         ,   "target.links"
         ,   "toolchain.links"
         ,   "config.frameworks"
@@ -101,8 +83,7 @@ language("c++")
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
-    ,   shared =
-        {
+    ,   shared = {
             "config.linkdirs"
         ,   "config.frameworkdirs"
         ,   "target.linkdirs"
@@ -110,12 +91,14 @@ language("c++")
         ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
+        ,   "target.optimize:check"
         ,   "target.runtimes"
         ,   "toolchain.linkdirs"
         ,   "toolchain.rpathdirs"
         ,   "toolchain.frameworkdirs"
         ,   "config.links"
         ,   "target.links"
+        ,   "target.linkgroups"
         ,   "toolchain.links"
         ,   "config.frameworks"
         ,   "target.frameworks"
@@ -124,21 +107,18 @@ language("c++")
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
-    ,   static =
-        {
+    ,   static = {
             "target.strip"
         ,   "target.symbols"
         }
     }
 
-    -- set menu
     set_menu {
                 config =
                 {
                     {category = "Cross Complation Configuration/Compiler Configuration"                             }
-                ,   {nil, "cc",            "kv", nil,          "The C Compiler"                                     }
                 ,   {nil, "cxx",           "kv", nil,          "The C++ Compiler"                                   }
-                ,   {nil, "cpp",           "kv", nil,          "The C Preprocessor"                                 }
+                ,   {nil, "cpp",           "kv", nil,          "The C/C++ Preprocessor"                             }
 
                 ,   {category = "Cross Complation Configuration/Linker Configuration"                               }
                 ,   {nil, "ld",            "kv", nil,          "The Linker"                                         }
@@ -147,7 +127,6 @@ language("c++")
                 ,   {nil, "ranlib",        "kv", nil,          "The Static Library Index Generator"                 }
 
                 ,   {category = "Cross Complation Configuration/Compiler Flags Configuration"                       }
-                ,   {nil, "cflags",        "kv", nil,          "The C Compiler Flags"                               }
                 ,   {nil, "cxflags",       "kv", nil,          "The C/C++ compiler Flags"                           }
                 ,   {nil, "cxxflags",      "kv", nil,          "The C++ Compiler Flags"                             }
 

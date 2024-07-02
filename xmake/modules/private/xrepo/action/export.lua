@@ -20,6 +20,7 @@
 
 -- imports
 import("core.base.option")
+import("core.base.task")
 
 -- get menu options
 function menu_options()
@@ -38,10 +39,13 @@ function menu_options()
                                        values = {"release", "debug"}         },
         {'f', "configs",    "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo export -f \"vs_runtime=MD\" zlib",
+                                       "    - xrepo export -f \"runtimes='MD'\" zlib",
                                        "    - xrepo export -f \"regex=true,thread=true\" boost"},
         {},
-        {'o', "outputdir",  "kv", "packages","Set the exported packages directory."},
+        {nil, "includes",   "kv", nil, "Includes extra lua configuration files."},
+        {nil, "toolchain",  "kv", nil, "Set the toolchain name."             },
+        {nil, "shallow",    "k",  nil, "Does not export dependent packages."},
+        {'o', "packagedir", "kv", "packages","Set the exported packages directory."},
         {nil, "packages",   "vs", nil, "The packages list.",
                                        "e.g.",
                                        "    - xrepo export zlib boost",
@@ -70,24 +74,49 @@ end
 -- export packages
 function _export_packages(packages)
 
+    -- is package configuration file? e.g. xrepo export xxx.lua
+    --
+    -- xxx.lua
+    --   add_requires("libpng", {system = false})
+    --   add_requireconfs("libpng.*", {configs = {shared = true}})
+    local packagefile
+    if type(packages) == "string" or #packages == 1 then
+        local filepath = table.unwrap(packages)
+        if type(filepath) == "string" and filepath:endswith(".lua") and os.isfile(filepath) then
+            packagefile = path.absolute(filepath)
+        end
+    end
+
+    -- add includes to rcfiles
+    local rcfiles = {}
+    local includes = option.get("includes")
+    if includes then
+        table.join2(rcfiles, path.splitenv(includes))
+    end
+
     -- enter working project directory
     local oldir = os.curdir()
-    local workdir = path.join(os.tmpdir(), "xrepo", "working")
+    local subdir = "working"
+    if packagefile then
+        subdir = subdir .. "-" .. hash.uuid(packagefile):split('-')[1]
+    end
+    local workdir = path.join(os.tmpdir(), "xrepo", subdir)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
+    if packagefile then
+        assert(os.isfile("xmake.lua"), "xmake.lua not found!")
+        io.writefile("xmake.lua", ('includes("%s")\ntarget("test", {kind = "phony"})'):format((packagefile:gsub("\\", "/"))))
+    end
 
     -- do configure first
-    local config_argv = {"f", "-c"}
-    if option.get("verbose") then
-        table.insert(config_argv, "-v")
-    end
+    local config_argv = {"f", "-c", "--require=n"}
     if option.get("diagnosis") then
-        table.insert(config_argv, "-D")
+        table.insert(config_argv, "-vD")
     end
     if option.get("plat") then
         table.insert(config_argv, "-p")
@@ -96,6 +125,9 @@ function _export_packages(packages)
     if option.get("arch") then
         table.insert(config_argv, "-a")
         table.insert(config_argv, option.get("arch"))
+    end
+    if option.get("toolchain") then
+        table.insert(config_argv, "--toolchain=" .. option.get("toolchain"))
     end
     local mode  = option.get("mode")
     if mode then
@@ -107,7 +139,11 @@ function _export_packages(packages)
         table.insert(config_argv, "-k")
         table.insert(config_argv, kind)
     end
-    os.vrunv("xmake", config_argv)
+    local envs = {}
+    if #rcfiles > 0 then
+        envs.XMAKE_RCFILES = path.joinenv(rcfiles)
+    end
+    os.vrunv(os.programfile(), config_argv, {envs = envs})
 
     -- do export
     local require_argv = {"require", "--export"}
@@ -120,20 +156,74 @@ function _export_packages(packages)
     if option.get("diagnosis") then
         table.insert(require_argv, "-D")
     end
-    local outputdir = option.get("outputdir")
-    if outputdir and not path.is_absolute(outputdir) then
-        outputdir = path.absolute(outputdir, oldir)
+    if option.get("shallow") then
+        table.insert(require_argv, "--shallow")
     end
-    if outputdir then
-        table.insert(require_argv, "--exportdir=" .. outputdir)
+    local packagedir = option.get("packagedir")
+    if packagedir and not path.is_absolute(packagedir) then
+        packagedir = path.absolute(packagedir, oldir)
+    end
+    if packagedir then
+        table.insert(require_argv, "--packagedir=" .. packagedir)
     end
     local extra = {system = false}
     if mode == "debug" then
         extra.debug = true
     end
-    if kind == "shared" then
+    if kind then
         extra.configs = extra.configs or {}
-        extra.configs.shared = true
+        extra.configs.shared = kind == "shared"
+    end
+    local configs = option.get("configs")
+    if configs then
+        extra.configs = extra.configs or {}
+        local extra_configs, errors = ("{" .. configs .. "}"):deserialize()
+        if extra_configs then
+            table.join2(extra.configs, extra_configs)
+        else
+            raise(errors)
+        end
+    end
+    if not packagefile then
+        if extra then
+            local extra_str = string.serialize(extra, {indent = false, strip = true})
+            table.insert(require_argv, "--extra=" .. extra_str)
+        end
+        table.join2(require_argv, packages)
+    end
+    os.vexecv(os.programfile(), require_argv, {envs = envs})
+end
+
+-- export packages in current project
+function _export_current_packages(packages)
+
+    -- do export
+    local require_argv = {export = true}
+    if option.get("yes") then
+        require_argv.yes = true
+    end
+    if option.get("verbose") then
+        require_argv.verbose = true
+    end
+    if option.get("diagnosis") then
+        require_argv.diagnosis = true
+    end
+    local packagedir = option.get("packagedir")
+    if packagedir and not path.is_absolute(packagedir) then
+        packagedir = path.absolute(packagedir, oldir)
+    end
+    if packagedir then
+        require_argv.packagedir = packagedir
+    end
+    local extra = {system = false}
+    local mode  = option.get("mode")
+    if mode == "debug" then
+        extra.debug = true
+    end
+    local kind = option.get("kind")
+    if kind then
+        extra.configs = extra.configs or {}
+        extra.configs.shared = kind == "shared"
     end
     local configs = option.get("configs")
     if configs then
@@ -147,10 +237,9 @@ function _export_packages(packages)
     end
     if extra then
         local extra_str = string.serialize(extra, {indent = false, strip = true})
-        table.insert(require_argv, "--extra=" .. extra_str)
+        require_argv.extra = extra_str
     end
-    table.join2(require_argv, packages)
-    os.vexecv("xmake", require_argv)
+    task.run("require", require_argv)
 end
 
 -- main entry
@@ -158,6 +247,8 @@ function main()
     local packages = option.get("packages")
     if packages then
         _export_packages(packages)
+    elseif os.isfile(os.projectfile()) then
+        _export_current_packages()
     else
         raise("please specify the packages to be exported.")
     end

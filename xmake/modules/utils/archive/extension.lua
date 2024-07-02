@@ -23,15 +23,14 @@ import("core.base.hashset")
 
 -- get the archive extension
 function main(archivefile)
-
     local extension = ""
     local filename = path.filename(archivefile)
-    local extensionset = hashset.from({".zip", ".7z", ".gz", ".xz", ".tgz", ".bz2", ".tar", ".tar.gz", ".tar.xz", ".tar.bz2"})
+    local extensionset = hashset.from({".zip", ".7z", ".gz", ".xz", ".tgz", ".bz2", ".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.Z"})
     local i = filename:lastof(".", true)
     if i then
         local p = filename:sub(1, i - 1):lastof(".", true)
         if p and extensionset:has(filename:sub(p)) then i = p end
         extension = filename:sub(i)
     end
-    return extension
+    return extensionset:has(extension) and extension or ""
 end

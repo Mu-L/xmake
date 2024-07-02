@@ -21,11 +21,15 @@
 -- install pkg-config/*.pc import files
 rule("utils.install.pkgconfig_importfiles")
     after_install(function (target, opt)
-        import("target.action.install.pkgconfig_importfiles")(target, opt)
+        opt = opt or {}
+        local configs = target:extraconf("rules", "utils.install.pkgconfig_importfiles")
+        import("target.action.install.pkgconfig_importfiles")(target, table.join(opt, configs))
     end)
 
 -- install *.cmake import files
 rule("utils.install.cmake_importfiles")
     after_install(function (target, opt)
-        import("target.action.install.cmake_importfiles")(target, opt)
+        opt = opt or {}
+        local configs = target:extraconf("rules", "utils.install.cmake_importfiles")
+        import("target.action.install.cmake_importfiles")(target, table.join(opt, configs))
     end)

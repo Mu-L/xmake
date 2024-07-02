@@ -23,9 +23,10 @@ import("core.base.option")
 import("core.theme.theme")
 import("core.tool.compiler")
 import("core.project.depend")
-import("private.tools.ccache")
-import("private.async.runjobs")
-import("private.utils.progress")
+import("private.cache.build_cache")
+import("async.runjobs")
+import("utils.progress")
+import("private.service.distcc_build.client", {alias = "distcc_build_client"})
 
 -- do build file
 function _do_build_file(target, sourcefile, opt)
@@ -42,28 +43,40 @@ function _do_build_file(target, sourcefile, opt)
     local compflags = compinst:compflags({target = target, sourcefile = sourcefile, configs = opt.configs})
 
     -- load dependent info
-    local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+    local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile, {target = target}) or {})
 
     -- dry run?
     local dryrun = option.get("dry-run")
 
     -- need build this object?
-    -- @note we use mtime(dependfile) instead of mtime(objectfile) to ensure the object file is is fully compiled.
+    --
+    -- we need use `os.mtime(dependfile)` to determine the mtime of the dependfile to avoid objectfile corruption due to compilation interruptions
     -- @see https://github.com/xmake-io/xmake/issues/748
+    --
+    -- we also need avoid the problem of not being able to recompile after the objectfile has been deleted
+    -- @see https://github.com/xmake-io/xmake/issues/2551#issuecomment-1183922208
     local depvalues = {compinst:program(), compflags}
-    if not dryrun and not depend.is_changed(dependinfo, {lastmtime = os.mtime(dependfile), values = depvalues}) then
+    local lastmtime = os.isfile(objectfile) and os.mtime(dependfile) or 0
+    if not dryrun and not depend.is_changed(dependinfo, {lastmtime = lastmtime, values = depvalues}) then
         return
     end
 
     -- is verbose?
     local verbose = option.get("verbose")
 
-    -- exists ccache?
-    local exists_ccache = ccache.exists()
+    -- exists ccache or distcc?
+    -- we just show cache/distc to avoid confusion with third-party ccache/distcc
+    local prefix = ""
+    if build_cache.is_enabled(target) and build_cache.is_supported(sourcekind) then
+        prefix = "cache "
+    end
+    if distcc_build_client.is_distccjob() and distcc_build_client.singleton():has_freejobs() then
+        prefix = prefix .. "distc "
+    end
 
     -- trace progress info
     if not opt.quiet then
-        progress.show(opt.progress, "${color.build.object}%scompiling.$(mode) %s", exists_ccache and "ccache " or "", sourcefile)
+        progress.show(opt.progress, "${color.build.object}%scompiling.$(mode) %s", prefix, sourcefile)
     end
 
     -- trace verbose info
@@ -77,15 +90,33 @@ function _do_build_file(target, sourcefile, opt)
         dependinfo.files = {}
         assert(compinst:compile(sourcefile, objectfile, {dependinfo = dependinfo, compflags = compflags}))
 
-        -- update files and values to the dependent file
+        -- update files and values to the depfiles
         dependinfo.values = depvalues
-        table.join2(dependinfo.files, sourcefile, target:pcoutputfile("cxx") or {}, target:pcoutputfile("c"))
+        table.insert(dependinfo.files, sourcefile)
+
+        -- add precompiled header to the depfiles when building sourcefile
+        local build_pch
+        local pcxxoutputfile = target:pcoutputfile("cxx")
+        local pcoutputfile = target:pcoutputfile("c")
+        if pcxxoutputfile or pcoutputfile then
+            -- https://github.com/xmake-io/xmake/issues/3988
+            local extension = path.extension(sourcefile)
+            if (extension:startswith(".h") or extension == ".inl") then
+                build_pch = true
+            end
+        end
+        if target:has_sourcekind("cxx") and pcxxoutputfile and not build_pch then
+            table.insert(dependinfo.files, pcxxoutputfile)
+        end
+        if target:has_sourcekind("cc") and pcoutputfile and not build_pch then
+            table.insert(dependinfo.files, pcoutputfile)
+        end
         depend.save(dependinfo, dependfile)
     end
 end
 
 -- build object
-function _build_object(target, sourcefile, opt)
+function build_object(target, sourcefile, opt)
     local script = target:script("build_file", _do_build_file)
     if script then
         script(target, sourcefile, opt)
@@ -99,7 +130,7 @@ function build(target, sourcebatch, opt)
         opt.objectfile   = sourcebatch.objectfiles[i]
         opt.dependfile   = sourcebatch.dependfiles[i]
         opt.sourcekind   = assert(sourcebatch.sourcekind, "%s: sourcekind not found!", sourcefile)
-        _build_object(target, sourcefile, opt)
+        build_object(target, sourcefile, opt)
     end
 end
 
@@ -111,9 +142,9 @@ function main(target, batchjobs, sourcebatch, opt)
         local objectfile = sourcebatch.objectfiles[i]
         local dependfile = sourcebatch.dependfiles[i]
         local sourcekind = assert(sourcebatch.sourcekind, "%s: sourcekind not found!", sourcefile)
-        batchjobs:addjob(sourcefile, function (index, total)
-            local build_opt = table.join({objectfile = objectfile, dependfile = dependfile, sourcekind = sourcekind, progress = (index * 100) / total}, opt)
-            _build_object(target, sourcefile, build_opt)
-        end, rootjob)
+        batchjobs:addjob(sourcefile, function (index, total, jobopt)
+            local build_opt = table.join({objectfile = objectfile, dependfile = dependfile, sourcekind = sourcekind, progress = jobopt.progress}, opt)
+            build_object(target, sourcefile, build_opt)
+        end, {rootjob = rootjob, distcc = opt.distcc})
     end
 end

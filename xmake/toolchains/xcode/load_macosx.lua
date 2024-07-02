@@ -18,59 +18,63 @@
 -- @file        load_macosx.lua
 --
 
--- imports
-import("core.project.config")
-
--- main entry
 function main(toolchain)
 
-    -- init flags for architecture
     local arch          = toolchain:arch()
     local target_minver = toolchain:config("target_minver")
+    local xcode_sysroot = toolchain:config("xcode_sysroot")
 
-    -- init flags for the xcode sdk directory
-    local xcode_dir     = config.get("xcode")
-    local xcode_sdkver  = toolchain:config("xcode_sdkver")
-    local xcode_sdkdir  = nil
-    if xcode_dir and xcode_sdkver then
-        xcode_sdkdir = xcode_dir .. "/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX" .. xcode_sdkver .. ".sdk"
+    -- init target flags
+    local appledev = toolchain:config("appledev")
+    if target_minver then
+        local target = ("%s-apple-macos%s"):format(arch, target_minver)
+        if appledev == "catalyst" then
+            target = ("%s-apple-ios%s-macabi"):format(arch, target_minver)
+        end
+        toolchain:add("cxflags", "-target", target)
+        toolchain:add("mxflags", "-target", target)
+        toolchain:add("asflags", "-target", target)
+        toolchain:add("ldflags", "-target", target)
+        toolchain:add("shflags", "-target", target)
+        toolchain:add("scflags", "-target", target)
+        toolchain:add("scldflags", "-target", target)
+        toolchain:add("scshflags", "-target", target)
+    end
+
+    -- add sysroot flags
+    if xcode_sysroot then
+        toolchain:add("cxflags", "-isysroot", xcode_sysroot)
+        toolchain:add("asflags", "-isysroot", xcode_sysroot)
+        toolchain:add("ldflags", "-isysroot", xcode_sysroot)
+        toolchain:add("shflags", "-isysroot", xcode_sysroot)
+        toolchain:add("mxflags", "-isysroot", xcode_sysroot)
+        toolchain:add("scflags", "-sdk " .. xcode_sysroot)
+        toolchain:add("scshflags", "-sdk " .. xcode_sysroot)
+        toolchain:add("scldflags", "-sdk " .. xcode_sysroot)
+        if appledev == "catalyst" then
+            toolchain:add("cxflags", {"-I", path.join(xcode_sysroot, "System/iOSSupport/usr/include")})
+            toolchain:add("asflags", {"-I", path.join(xcode_sysroot, "System/iOSSupport/usr/include")})
+            toolchain:add("mxflags", {"-I", path.join(xcode_sysroot, "System/iOSSupport/usr/include")})
+            toolchain:add("ldflags", {"-L", path.join(xcode_sysroot, "System/iOSSupport/usr/lib")})
+            toolchain:add("shflags", {"-L", path.join(xcode_sysroot, "System/iOSSupport/usr/lib")})
+            toolchain:add("scldflags", {"-L", path.join(xcode_sysroot, "System/iOSSupport/usr/lib")})
+            toolchain:add("scshflags", {"-L", path.join(xcode_sysroot, "System/iOSSupport/usr/lib")})
+            toolchain:add("cxflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+            toolchain:add("asflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+            toolchain:add("ldflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+            toolchain:add("shflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+            toolchain:add("mxflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+            toolchain:add("scflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+            toolchain:add("scshflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+            toolchain:add("scldflags", {"-iframework", path.join(xcode_sysroot, "System/iOSSupport/System/Library/Frameworks")})
+        end
     end
 
     -- init flags for c/c++
-    toolchain:add("cxflags", "-arch " .. arch)
-    toolchain:add("ldflags", "-arch " .. arch)
-    toolchain:add("shflags", "-arch " .. arch)
-    if target_minver then
-        toolchain:add("cxflags", "-mmacosx-version-min=" .. target_minver)
-        toolchain:add("mxflags", "-mmacosx-version-min=" .. target_minver)
-        toolchain:add("ldflags", "-mmacosx-version-min=" .. target_minver)
-        toolchain:add("shflags", "-mmacosx-version-min=" .. target_minver)
-    end
-    if xcode_sdkdir then
-        toolchain:add("cxflags", "-isysroot " .. xcode_sdkdir)
-        toolchain:add("ldflags", "-isysroot " .. xcode_sdkdir)
-        toolchain:add("shflags", "-isysroot " .. xcode_sdkdir)
-    end
-    toolchain:add("ldflags", "-stdlib=libc++")
-    toolchain:add("shflags", "-stdlib=libc++")
-    toolchain:add("syslinks", "z")
+    toolchain:add("ldflags", "-lz")
+    toolchain:add("shflags", "-lz")
 
     -- init flags for objc/c++ (with ldflags and shflags)
-    toolchain:add("mxflags", "-arch " .. arch)
-    if xcode_sdkdir then
-        toolchain:add("mxflags", "-isysroot " .. xcode_sdkdir)
-    end
-
-    -- init flags for asm
-    toolchain:add("asflags", "-arch " .. arch)
-    if xcode_sdkdir then
-        toolchain:add("asflags", "-isysroot " .. xcode_sdkdir)
-    end
-
-    -- init flags for swift
-    if target_minver and xcode_sdkdir then
-        toolchain:add("scflags", format("-target %s-apple-macosx%s", arch, target_minver) , "-sdk " .. xcode_sdkdir)
-        toolchain:add("scshflags", format("-target %s-apple-macosx%s", arch, target_minver) , "-sdk " .. xcode_sdkdir)
-        toolchain:add("scldflags", format("-target %s-apple-macosx%s", arch, target_minver) , "-sdk " .. xcode_sdkdir)
-    end
+    -- we can use `add_mxflags("-fno-objc-arc")` to override it in xmake.lua
+    toolchain:add("mxflags", "-fobjc-arc")
 end

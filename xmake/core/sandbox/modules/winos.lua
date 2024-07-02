@@ -26,13 +26,14 @@ local raise = require("sandbox/modules/raise")
 local sandbox_winos = sandbox_winos or {}
 
 -- inherit some builtin interfaces
-sandbox_winos.oem_cp            = winos.oem_cp
-sandbox_winos.ansi_cp           = winos.ansi_cp
-sandbox_winos.cp_info           = winos.cp_info
-sandbox_winos.console_cp        = winos.console_cp
-sandbox_winos.console_output_cp = winos.console_output_cp
-sandbox_winos.logical_drives    = winos.logical_drives
-sandbox_winos.cmdargv           = winos.cmdargv
+sandbox_winos.oem_cp                  = winos.oem_cp
+sandbox_winos.ansi_cp                 = winos.ansi_cp
+sandbox_winos.cp_info                 = winos.cp_info
+sandbox_winos.console_cp              = winos.console_cp
+sandbox_winos.console_output_cp       = winos.console_output_cp
+sandbox_winos.logical_drives          = winos.logical_drives
+sandbox_winos.cmdargv                 = winos.cmdargv
+sandbox_winos.inherit_handles_safely  = winos.inherit_handles_safely
 
 -- get windows system version
 function sandbox_winos.version()
@@ -68,6 +69,15 @@ function sandbox_winos.registry_values(keypath)
         raise(errors)
     end
     return values
+end
+
+-- get short path
+function sandbox_winos.short_path(long_path)
+    local short_path, errors = winos.short_path(long_path)
+    if not short_path then
+        raise(errors)
+    end
+    return short_path
 end
 
 -- return module

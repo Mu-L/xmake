@@ -19,18 +19,62 @@
 --
 
 -- imports
+import("core.base.hashset")
 import("core.sandbox.module")
 
--- find tool name from the given program
-function _find(program)
+-- remove some suffix
+--
+-- we just remove some known extension, because we need to reverse others, e.g. ld.lld, ld64.lld
+--
+function _remove_suffix(name)
+    local exts = hashset.of("exe", "bat", "sh", "ps1", "ps")
+    name = name:gsub("%.(%w+)", function (ext)
+        ext = ext:lower()
+        if exts:has(ext) then
+            return ""
+        end
+    end)
+    return name
+end
+
+-- find the the whole name
+function _find_with_whole_name(program)
 
     -- attempt to find it directly first
     if module.find("detect.tools.find_" .. program) then
         return program
     end
 
+    -- find the the whole name with spaces, e.g. "zig cc" -> zig_cc
+    local partnames = {}
+    local names = path.filename(program):lower():split("%s")
+    for _, name in ipairs(names) do
+        -- remove suffix: ".exe", e.g. "zig.exe cc"
+        name = _remove_suffix(name)
+        -- "zig c++" -> zig_cxx
+        name = name:gsub("%+", "x")
+        -- skip -arguments
+        if not name:startswith("-") then
+            table.insert(partnames, name)
+        end
+    end
+    local toolname = table.concat(partnames, "_")
+    if module.find("detect.tools.find_" .. toolname) then
+        return toolname
+    end
+end
+
+-- find tool name from the given program
+function _find(program)
+
+    -- find whole name first
+    local toolname = _find_with_whole_name(program)
+    if toolname then
+        return toolname
+    end
+
     -- get file name first
-    name = path.filename(program):lower()
+    local name = path.filename(program):lower()
 
     -- remove arguments: " -xxx" or " --xxx"
     name = name:gsub("%s%-+%w+", " ")
@@ -42,41 +86,28 @@ function _find(program)
     end
 
     -- remove suffix: ".xxx"
-    name = name:gsub("%.%w+", "")
-    local toolname = name:gsub("[%+%-]", function (ch) return (ch == "+" and "x" or "_") end)
+    name = _remove_suffix(name)
+    toolname = name:gsub("[%+%-%.]", function (ch) return (ch == "+" and "x" or "_") end)
     if module.find("detect.tools.find_" .. toolname) then
         return toolname
     end
 
     -- try last valid name: xxx-xxx-toolname-5
+    --
+    -- e.g.
+    -- arm-none-eabi-gcc-ar -> gcc_ar
+    -- arm-none-eabi-gcc -> gcc
     local partnames = {}
     for partname in name:gmatch("([%a%+]+)") do
         table.insert(partnames, partname)
     end
-    if #partnames > 0 then
-        name = partnames[#partnames]
-    end
-    toolname = name:gsub("%+", "x")
-    if module.find("detect.tools.find_" .. toolname) then
-        return toolname
-    end
-
-    -- try the the whole name with spaces, e.g. "zig cc" -> zig_cc
-    partnames = {}
-    names = path.filename(program):lower():split("%s")
-    for _, name in ipairs(names) do
-        -- remove suffix: ".exe", e.g. "zig.exe cc"
-        name = name:gsub("%.%w+", "")
-        -- "zig c++" -> zig_cxx
-        name = name:gsub("%+", "x")
-        -- skip -arguments
-        if not name:startswith("-") then
-            table.insert(partnames, name)
+    while #partnames > 0 do
+        name = table.concat(partnames, "_")
+        table.remove(partnames, 1)
+        toolname = name:gsub("%+", "x")
+        if module.find("detect.tools.find_" .. toolname) then
+            return toolname
         end
-    end
-    toolname = table.concat(partnames, "_")
-    if module.find("detect.tools.find_" .. toolname) then
-        return toolname
     end
 end
 

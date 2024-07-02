@@ -21,15 +21,7 @@
 -- imports
 import("core.project.project")
 import("vsfile")
-
--- get vs arch
-function _vs_arch(arch)
-    if arch == 'x86' or arch == 'i386' then return "Win32" end
-    if arch == 'x86_64' then return "x64" end
-    if arch:startswith('arm64') then return "ARM64" end
-    if arch:startswith('arm') then return "ARM" end
-    return arch
-end
+import("vsutils")
 
 -- make header
 function _make_header(slnfile, vsinfo)
@@ -44,22 +36,20 @@ function _make_projects(slnfile, vsinfo)
     local groups = {}
     local targets = {}
     local vctool = "8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942"
-    for targetname, target in pairs(project.targets()) do
-        if not target:is_phony() then
-            -- we need set startup project for default or binary target
-            -- @see https://github.com/xmake-io/xmake/issues/1249
-            if target:get("default") == true then
+    for targetname, target in table.orderpairs(project.targets()) do
+        -- we need to set startup project for default or binary target
+        -- @see https://github.com/xmake-io/xmake/issues/1249
+        if target:get("default") == true then
+            table.insert(targets, 1, target)
+        elseif target:is_binary() then
+            local first_target = targets[1]
+            if not first_target or first_target:get("default") ~= true then
                 table.insert(targets, 1, target)
-            elseif target:is_binary() then
-                local first_target = targets[1]
-                if not first_target or first_target:is_default() then
-                    table.insert(targets, 1, target)
-                else
-                    table.insert(targets, target)
-                end
             else
                 table.insert(targets, target)
             end
+        else
+            table.insert(targets, target)
         end
     end
     for _, target in ipairs(targets) do
@@ -72,16 +62,16 @@ function _make_projects(slnfile, vsinfo)
         end
         slnfile:leave("EndProject")
         local group_path = target:get("group")
-        if group_path then
+        if group_path and #(group_path:trim()) > 0 then
             for _, group_name in ipairs(path.split(group_path)) do
-                groups[group_name] = hash.uuid4(group_name)
+                groups[group_name] = hash.uuid4("group." .. group_name)
             end
         end
     end
 
     -- make all groups
     local project_group_uuid = "2150E333-8FDC-42A3-9474-1A3956D46DE8"
-    for group_name, group_uuid in pairs(groups) do
+    for group_name, group_uuid in table.orderpairs(groups) do
         slnfile:enter("Project(\"{%s}\") = \"%s\", \"%s\", \"{%s}\"", project_group_uuid, group_name, group_name, group_uuid)
         slnfile:leave("EndProject")
     end
@@ -104,14 +94,12 @@ function _make_global(slnfile, vsinfo)
 
     -- add project configuration platforms
     slnfile:enter("GlobalSection(ProjectConfigurationPlatforms) = postSolution")
-    for targetname, target in pairs(project.targets()) do
-        if not target:is_phony() then
-            for _, mode in ipairs(vsinfo.modes) do
-                for _, arch in ipairs(vsinfo.archs) do
-                    local vs_arch = _vs_arch(arch)
-                    slnfile:print("{%s}.%s|%s.ActiveCfg = %s|%s", hash.uuid4(targetname), mode, arch, mode, vs_arch)
-                    slnfile:print("{%s}.%s|%s.Build.0 = %s|%s", hash.uuid4(targetname), mode, arch, mode, vs_arch)
-                end
+    for targetname, target in table.orderpairs(project.targets()) do
+        for _, mode in ipairs(vsinfo.modes) do
+            for _, arch in ipairs(vsinfo.archs) do
+                local vs_arch = vsutils.vsarch(arch)
+                slnfile:print("{%s}.%s|%s.ActiveCfg = %s|%s", hash.uuid4(targetname), mode, arch, mode, vs_arch)
+                slnfile:print("{%s}.%s|%s.Build.0 = %s|%s", hash.uuid4(targetname), mode, arch, mode, vs_arch)
             end
         end
     end
@@ -125,22 +113,20 @@ function _make_global(slnfile, vsinfo)
     -- add project groups
     slnfile:enter("GlobalSection(NestedProjects) = preSolution")
     local subgroups = {}
-    for targetname, target in pairs(project.targets()) do
-        if not target:is_phony() then
-            local group_path = target:get("group")
-            if group_path then
-                -- target -> group
-                local group_name = path.filename(group_path)
-                slnfile:print("{%s} = {%s}", hash.uuid4(targetname), hash.uuid4(group_name))
-                -- group -> group -> ...
-                local group_names = path.split(group_path)
-                for idx, group_name in ipairs(group_names) do
-                    local key = group_name .. (group_name_sub or "")
-                    local group_name_sub = group_names[idx + 1]
-                    if group_name_sub and not subgroups[key] then
-                        slnfile:print("{%s} = {%s}", hash.uuid4(group_name_sub), hash.uuid4(group_name))
-                        subgroups[key] = true
-                    end
+    for targetname, target in table.orderpairs(project.targets()) do
+        local group_path = target:get("group")
+        if group_path then
+            -- target -> group
+            local group_name = path.filename(group_path)
+            slnfile:print("{%s} = {%s}", hash.uuid4(targetname), hash.uuid4("group." .. group_name))
+            -- group -> group -> ...
+            local group_names = path.split(group_path)
+            for idx, group_name in ipairs(group_names) do
+                local key = group_name .. (group_name_sub or "")
+                local group_name_sub = group_names[idx + 1]
+                if group_name_sub and not subgroups[key] then
+                    slnfile:print("{%s} = {%s}", hash.uuid4("group." .. group_name_sub), hash.uuid4("group." .. group_name))
+                    subgroups[key] = true
                 end
             end
         end

@@ -19,8 +19,10 @@
 --
 
 -- imports
+import("core.project.config")
 import("lib.detect.find_file")
 import("lib.detect.find_tool")
+import("core.cache.global_detectcache")
 
 -- init vc variables
 local vcvars = {"path",
@@ -34,31 +36,118 @@ local vcvars = {"path",
                 "WindowsLibPath",
                 "WindowsSDKVersion",
                 "WindowsSdkBinPath",
+                "WindowsSdkVerBinPath",
+                "ExtensionSdkDir",
                 "UniversalCRTSdkDir",
-                "UCRTVersion"}
+                "UCRTVersion",
+                "VCToolsVersion",
+                "VCIDEInstallDir",
+                "VCToolsInstallDir",
+                "VCToolsRedistDir",
+                "VisualStudioVersion",
+                "VSCMD_VER",
+                "VSCMD_ARG_app_plat",
+                "VSCMD_ARG_HOST_ARCH",
+                "VSCMD_ARG_TGT_ARCH"}
+
+-- init vsvers
+local vsvers =
+{
+    ["17.0"] = "2022"
+,   ["16.0"] = "2019"
+,   ["15.0"] = "2017"
+,   ["14.0"] = "2015"
+,   ["12.0"] = "2013"
+,   ["11.0"] = "2012"
+,   ["10.0"] = "2010"
+,   ["9.0"]  = "2008"
+,   ["8.0"]  = "2005"
+,   ["7.1"]  = "2003"
+,   ["7.0"]  = "7.0"
+,   ["6.0"]  = "6.0"
+,   ["5.0"]  = "5.0"
+,   ["4.2"]  = "4.2"
+}
+
+-- init vsenvs
+local vsenvs =
+{
+    ["17.0"] = "VS170COMNTOOLS"
+,   ["16.0"] = "VS160COMNTOOLS"
+,   ["15.0"] = "VS150COMNTOOLS"
+,   ["14.0"] = "VS140COMNTOOLS"
+,   ["12.0"] = "VS120COMNTOOLS"
+,   ["11.0"] = "VS110COMNTOOLS"
+,   ["10.0"] = "VS100COMNTOOLS"
+,   ["9.0"]  = "VS90COMNTOOLS"
+,   ["8.0"]  = "VS80COMNTOOLS"
+,   ["7.1"]  = "VS71COMNTOOLS"
+,   ["7.0"]  = "VS70COMNTOOLS"
+,   ["6.0"]  = "VS60COMNTOOLS"
+,   ["5.0"]  = "VS50COMNTOOLS"
+,   ["4.2"]  = "VS42COMNTOOLS"
+}
+
+-- get all known Visual Studio environment variables
+function get_vcvars()
+    local realvcvars = vcvars
+    for _, v in pairs(vsenvs) do
+        table.insert(realvcvars, v)
+    end
+    return realvcvars
+end
 
 -- load vcvarsall environment variables
 function _load_vcvarsall(vcvarsall, vsver, arch, opt)
+    opt = opt or {}
+
+    -- is VsDevCmd.bat?
+    local is_vsdevcmd = path.basename(vcvarsall):lower() == "vsdevcmd"
 
     -- make the genvcvars.bat
-    opt = opt or {}
     local genvcvars_bat = os.tmpfile() .. "_genvcvars.bat"
     local file = io.open(genvcvars_bat, "w")
     file:print("@echo off")
-    -- @note we need get utf8 output from cmd.exe
+    -- @note we need to get utf8 output from cmd.exe
     -- because some %PATH% and other envs maybe contains unicode characters
-    file:print("chcp 65001")
+	if winos.version():gt("winxp") then
+    	file:print("chcp 65001")
+	end
     -- fix error caused by the new vsDevCmd.bat of vs2019
     -- @see https://github.com/xmake-io/xmake/issues/549
     if vsver and tonumber(vsver) >= 16 then
         file:print("set VSCMD_SKIP_SENDTELEMETRY=yes")
     end
-    if opt.vcvars_ver then
-        file:print("call \"%s\" %s %s -vcvars_ver=%s > nul", vcvarsall, arch,  opt.sdkver and opt.sdkver or "", opt.vcvars_ver)
+    local host_arch = os.arch()
+    if is_vsdevcmd then
+        if vsver and tonumber(vsver) >= 16 then
+            if opt.vcvars_ver then
+                file:print("call \"%s\" -host_arch=%s -arch=%s -winsdk=%s -vcvars_ver=%s > nul", vcvarsall, host_arch, arch, opt.sdkver and opt.sdkver or "", opt.vcvars_ver)
+            else
+                file:print("call \"%s\" -host_arch=%s -arch=%s -winsdk=%s > nul", vcvarsall, host_arch, arch, opt.sdkver and opt.sdkver or "")
+            end
+        else
+            if opt.vcvars_ver then
+                file:print("call \"%s\" -arch=%s -winsdk=%s -vcvars_ver=%s > nul", vcvarsall, arch, opt.sdkver and opt.sdkver or "", opt.vcvars_ver)
+            else
+                file:print("call \"%s\" -arch=%s -winsdk=%s > nul", vcvarsall, arch, opt.sdkver and opt.sdkver or "")
+            end
+        end
     else
-        file:print("call \"%s\" %s %s > nul", vcvarsall, arch, opt.sdkver and opt.sdkver or "")
+        -- @see https://github.com/xmake-io/xmake/issues/5077
+        if vsver and tonumber(vsver) >= 16 and host_arch ~= arch then
+            if host_arch == "x64" then
+                host_arch = "amd64"
+            end
+            arch = host_arch .. "_" .. arch
+        end
+        if opt.vcvars_ver then
+            file:print("call \"%s\" %s %s -vcvars_ver=%s > nul", vcvarsall, arch, opt.sdkver and opt.sdkver or "", opt.vcvars_ver)
+        else
+            file:print("call \"%s\" %s %s > nul", vcvarsall, arch, opt.sdkver and opt.sdkver or "")
+        end
     end
-    for idx, var in ipairs(vcvars) do
+    for idx, var in ipairs(get_vcvars()) do
         file:print("echo " .. var .. " = %%" .. var .. "%%")
     end
     file:close()
@@ -128,60 +217,11 @@ function _load_vcvarsall(vcvarsall, vsver, arch, opt)
     variables.lib     = nil
     variables.include = nil
     variables.libpath = nil
-
-    -- ok
     return variables
 end
 
--- find vstudio environment
---
--- @param opt   the options, e.g. {vcvars_ver = 14.0, sdkver = "10.0.15063.0"}
---
--- @return      { 2008 = {version = "9.0", vcvarsall = {x86 = {path = .., lib = .., include = ..}}}
---              , 2017 = {version = "15.0", vcvarsall = {x64 = {path = .., lib = ..}}}}
---
-function main(opt)
-
-    -- only for windows
-    if not is_host("windows") then
-        return
-    end
-
-    -- init vsvers
-    local vsvers =
-    {
-        ["16.0"] = "2019"
-    ,   ["15.0"] = "2017"
-    ,   ["14.0"] = "2015"
-    ,   ["12.0"] = "2013"
-    ,   ["11.0"] = "2012"
-    ,   ["10.0"] = "2010"
-    ,   ["9.0"]  = "2008"
-    ,   ["8.0"]  = "2005"
-    ,   ["7.1"]  = "2003"
-    ,   ["7.0"]  = "7.0"
-    ,   ["6.0"]  = "6.0"
-    ,   ["5.0"]  = "5.0"
-    ,   ["4.2"]  = "4.2"
-    }
-
-    -- init vsenvs
-    local vsenvs =
-    {
-        ["14.0"] = "VS140COMNTOOLS"
-    ,   ["12.0"] = "VS120COMNTOOLS"
-    ,   ["11.0"] = "VS110COMNTOOLS"
-    ,   ["10.0"] = "VS100COMNTOOLS"
-    ,   ["9.0"]  = "VS90COMNTOOLS"
-    ,   ["8.0"]  = "VS80COMNTOOLS"
-    ,   ["7.1"]  = "VS71COMNTOOLS"
-    ,   ["7.0"]  = "VS70COMNTOOLS"
-    ,   ["6.0"]  = "VS60COMNTOOLS"
-    ,   ["5.0"]  = "VS50COMNTOOLS"
-    ,   ["4.2"]  = "VS42COMNTOOLS"
-    }
-
-    -- init options
+-- find vstudio for msvc
+function _find_vstudio(opt)
     opt = opt or {}
 
     -- find the single current MSVC/VS from environment variables
@@ -223,15 +263,16 @@ function main(opt)
             VCInstallDir
         }
         local vcvarsall = find_file("vcvarsall.bat", paths) or find_file("vcvars32.bat", paths)
-        if vcvarsall and os.isfile(vcvarsall) then
+        if vcvarsall and os.isfile(vcvarsall) and vsvers[VisualStudioVersion] then
 
             -- load vcvarsall
-            local vcvarsall_x86 = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x86", opt)
-            local vcvarsall_x64 = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x64", opt)
+            local vcvarsall_x86   = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x86", opt)
+            local vcvarsall_x64   = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x64", opt)
+            local vcvarsall_arm64 = _load_vcvarsall(vcvarsall, VisualStudioVersion, "arm64", opt)
 
             -- save results
             local results = {}
-            results[vsvers[VisualStudioVersion]] = {version = VisualStudioVersion, vcvarsall_bat = vcvarsall, vcvarsall = {x86 = vcvarsall_x86, x64 = vcvarsall_x64}}
+            results[vsvers[VisualStudioVersion]] = {version = VisualStudioVersion, vcvarsall_bat = vcvarsall, vcvarsall = {x86 = vcvarsall_x86, x64 = vcvarsall_x64, arm64 = vcvarsall_arm64}}
             return results
         end
     end
@@ -251,17 +292,19 @@ function main(opt)
         -- * version > 15.0 eschews registry entries; but `vswhere` (included with version >= 15.2) can be used to find VC install path
         -- ref: https://github.com/Microsoft/vswhere/blob/master/README.md @@ https://archive.is/mEmdu
         local vswhere_VCAuxiliaryBuildDir = nil
+        local vswhere_Common7ToolsDir = nil
         if (tonumber(version) >= 15) and vswhere then
             local vswhere_vrange = format("%s,%s)", version, (version + 1))
-            local result = os.iorunv(vswhere.program, {"-property", "installationpath", "-version", vswhere_vrange})
+            -- build tools: https://github.com/microsoft/vswhere/issues/22 @@ https://aka.ms/vs/workloads
+            local result = os.iorunv(vswhere.program, {"-products", "*", "-prerelease", "-property", "installationpath", "-version", vswhere_vrange})
             if result then
                 vswhere_VCAuxiliaryBuildDir = path.join(result:trim(), "VC", "Auxiliary", "Build")
+                vswhere_Common7ToolsDir = path.join(result:trim(), "Common7", "Tools")
             end
         end
 
         -- init paths
-        local paths =
-        {
+        local paths = {
             format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\VC", version),
             format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\VC7\\bin", version),
             format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Wow6432Node\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\VC", version),
@@ -272,33 +315,157 @@ function main(opt)
             table.insert(paths, format("$(env %s)\\..\\..\\VC", vsenvs[version]))
         end
         if vswhere_VCAuxiliaryBuildDir and os.isdir(vswhere_VCAuxiliaryBuildDir) then
-            table.insert(paths, vswhere_VCAuxiliaryBuildDir)
+            table.insert(paths, 1, vswhere_VCAuxiliaryBuildDir)
         end
-
+        if version == "6.0" and os.arch() == "x64" then
+	    table.insert(paths, "$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\DevStudio\\6.0\\Products\\Microsoft Visual C++;ProductDir)\\Bin")
+	    table.insert(paths, "$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\VisualStudio\\6.0\\Setup\\Microsoft Visual C++;ProductDir)\\Bin")
+        end
+		
         -- find vcvarsall.bat, vcvars32.bat for vs7.1
         local vcvarsall = find_file("vcvarsall.bat", paths) or find_file("vcvars32.bat", paths)
         if not vcvarsall then
             -- find vs from some logical drives paths
             paths = {}
-            for _, logical_drive in ipairs(winos.logical_drives()) do
+            local logical_drives = winos.logical_drives()
+            -- we attempt to find vs from wdk directory
+            -- wdk: E:\Program Files\Windows Kits\10
+            -- vcvarsall: E:\Program Files\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build
+            local wdk = config.get("wdk")
+            if wdk and os.isdir(wdk) then
+                local p = wdk:find("Program Files")
+                if p then
+                    table.insert(logical_drives, wdk:sub(1, p - 1))
+                end
+            end
+            for _, logical_drive in ipairs(logical_drives) do
                 if os.isdir(path.join(logical_drive, "Program Files (x86)")) then
                     table.insert(paths, path.join(logical_drive, "Program Files (x86)", "Microsoft Visual Studio", vsvers[version], "*", "VC", "Auxiliary", "Build"))
                     table.insert(paths, path.join(logical_drive, "Program Files (x86)", "Microsoft Visual Studio " .. version, "VC"))
                 end
                 table.insert(paths, path.join(logical_drive, "Program Files", "Microsoft Visual Studio", vsvers[version], "*", "VC", "Auxiliary", "Build"))
                 table.insert(paths, path.join(logical_drive, "Program Files", "Microsoft Visual Studio " .. version, "VC"))
+                if version == "6.0" then
+                    table.insert(paths, path.join(logical_drive, "Program Files", "Microsoft Visual Studio", "VC98", "Bin"))
+                    table.insert(paths, path.join(logical_drive, "Program Files (x86)", "Microsoft Visual Studio", "VC98", "Bin"))
+                end
             end
             vcvarsall = find_file("vcvarsall.bat", paths) or find_file("vcvars32.bat", paths)
+        end
+        if not vcvarsall then
+            local paths = {
+                format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\Common7\\Tools", version),
+                format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Wow6432Node\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\Common7\\Tools", version)
+            }
+            if vswhere_Common7ToolsDir and os.isdir(vswhere_Common7ToolsDir) then
+                table.insert(paths, 1, vswhere_Common7ToolsDir)
+            end
+            vcvarsall = find_file("VsDevCmd.bat", paths)
         end
         if vcvarsall then
 
             -- load vcvarsall
-            local vcvarsall_x86 = _load_vcvarsall(vcvarsall, version, "x86", opt)
-            local vcvarsall_x64 = _load_vcvarsall(vcvarsall, version, "x64", opt)
+            local vcvarsall_x86   = _load_vcvarsall(vcvarsall, version, "x86", opt)
+            local vcvarsall_x64   = _load_vcvarsall(vcvarsall, version, "x64", opt)
+            local vcvarsall_arm64 = _load_vcvarsall(vcvarsall, version, "arm64", opt)
 
             -- save results
-            results[vsvers[version]] = {version = version, vcvarsall_bat = vcvarsall, vcvarsall = {x86 = vcvarsall_x86, x64 = vcvarsall_x64}}
+            results[vsvers[version]] = {version = version, vcvarsall_bat = vcvarsall, vcvarsall = {x86 = vcvarsall_x86, x64 = vcvarsall_x64, arm64 = vcvarsall_arm64}}
         end
     end
     return results
+end
+
+-- get last mtime of msvc
+-- @see https://github.com/xmake-io/xmake/issues/3652
+function _get_last_mtime_of_msvc(msvc)
+    local mtime = -1
+    for arch, envs in pairs(msvc.vcvarsall) do
+        if envs.PATH then
+            local pathenv = path.splitenv(envs.PATH)
+            for _, dir in ipairs(pathenv) do
+                local cl = path.join(dir, "cl.exe")
+                if os.isfile(cl) then
+                    local t = os.mtime(cl)
+                    if t > mtime then
+                        mtime = t
+                    end
+                end
+            end
+        end
+        local winsdk = envs.WindowsSdkDir
+        if winsdk and os.isdir(winsdk) then
+            local t = os.mtime(winsdk)
+            if t > mtime then
+                mtime = t
+            end
+        end
+    end
+    return mtime
+end
+
+-- get last mtime of vstudio
+function _get_last_mtime(vstudio)
+    local mtime = -1
+    for _, msvc in pairs(vstudio) do
+        local vcvarsall_bat = msvc.vcvarsall_bat
+        if vcvarsall_bat and os.isfile(vcvarsall_bat) then
+            local t = os.mtime(vcvarsall_bat)
+            if t > mtime then
+                mtime = t
+            end
+            t = _get_last_mtime_of_msvc(msvc)
+            if t > mtime then
+                mtime = t
+            end
+        else
+            mtime = -1
+            break
+        end
+    end
+    return mtime
+end
+
+-- find vstudio environment
+--
+-- @param opt   the options, e.g. {vcvars_ver = 14.0, sdkver = "10.0.15063.0"}
+--
+-- @return      { 2008 = {version = "9.0", vcvarsall = {x86 = {path = .., lib = .., include = ..}}}
+--              , 2017 = {version = "15.0", vcvarsall = {x64 = {path = .., lib = ..}}}}
+--
+function main(opt)
+    opt = opt or {}
+
+    -- only for windows
+    if not is_host("windows") then
+        return
+    end
+
+    local key = "vstudio"
+    if opt.vcvars_ver then
+        key = key .. opt.vcvars_ver
+    end
+    if opt.sdkver then
+        key = key .. opt.sdkver
+    end
+
+    -- attempt to get it from the global cache first
+    local vstudio = global_detectcache:get2(key, "msvc")
+    if vstudio then
+        local mtime = _get_last_mtime(vstudio)
+        local mtimeprev = global_detectcache:get2(key, "mtime")
+        if mtime and mtimeprev and mtime > 0 and mtimeprev > 0 and mtime == mtimeprev then
+            return vstudio
+        end
+    end
+
+    -- find and cache result
+    vstudio = _find_vstudio(opt)
+    if vstudio then
+        local mtime = _get_last_mtime(vstudio)
+        global_detectcache:set2(key, "msvc", vstudio)
+        global_detectcache:set2(key, "mtime", mtime)
+        global_detectcache:save()
+    end
+    return vstudio
 end

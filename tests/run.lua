@@ -10,23 +10,23 @@ if option.get("verbose") then table.insert(params, "-v") end
 if option.get("diagnosis") then table.insert(params, "-D") end
 
 function _run_test(script)
-
     assert(script:endswith("test.lua"))
-
     os.execv("xmake", table.join("lua", params, path.join(os.scriptdir(), "runner.lua"), script))
 end
 
 -- run test with the given name
 function _run_test_filter(name)
-
     local tests = {}
     local root = path.absolute(os.scriptdir())
-    -- find the test script
     for _, script in ipairs(os.files(path.join(root, "**", name, "**", "test.lua"))) do
-        table.insert(tests, path.absolute(script))
+        if not script:find(".xmake", 1, true) then
+            table.insert(tests, path.absolute(script))
+        end
     end
     for _, script in ipairs(os.files(path.join(root, name, "**", "test.lua"))) do
-        table.insert(tests, path.absolute(script))
+        if not script:find(".xmake", 1, true) then
+            table.insert(tests, path.absolute(script))
+        end
     end
     for _, script in ipairs(os.files(path.join(root, "**", name, "test.lua"))) do
         table.insert(tests, path.absolute(script))
@@ -53,9 +53,6 @@ function _run_test_filter(name)
     end
 end
 
--- main entry
 function main(name)
-
-    -- run the given test
     return _run_test_filter(name or "/")
 end

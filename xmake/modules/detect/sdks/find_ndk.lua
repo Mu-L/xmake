@@ -50,10 +50,16 @@ function _find_ndkdir(sdkdir)
     if not sdkdir then
         sdkdir = os.getenv("ANDROID_NDK_HOME") or os.getenv("ANDROID_NDK_ROOT")
         if not sdkdir and config.get("android_sdk") then
-            sdkdir = path.join(config.get("android_sdk"), "ndk-bundle")
+            local ndkbundle = path.join(config.get("android_sdk"), "ndk-bundle")
+            if os.isdir(ndkbundle) then
+                sdkdir = ndkbundle
+            end
         end
         if not sdkdir and is_host("macosx") then
-            sdkdir = "~/Library/Android/sdk/ndk-bundle"
+            sdkdir = find_directory("NDK", "/Applications/AndroidNDK*.app/Contents")
+            if not sdkdir then
+                sdkdir = "~/Library/Android/sdk/ndk-bundle"
+            end
         end
     end
 
@@ -80,6 +86,7 @@ function _find_ndk_sdkver(sdkdir, bindir, sysroot, arch)
 
     -- get triple
     local triple = _get_triple(arch)
+    assert(triple, "no triple found for arch %s (wrong arch?)", arch)
 
     -- try to select the best compatible version
     local sdkver = "16"
@@ -188,8 +195,12 @@ function _find_ndk(sdkdir, arch, ndk_sdkver, ndk_toolchains_ver)
     local gcc_toolchain_subdir = gcc_toolchain_subdirs[arch] or "arm-linux-androideabi-*"
 
     -- find the binary directory
-    local bindir = find_directory("bin", path.join(sdkdir, "toolchains", "llvm", "prebuilt", "*")) -- larger than ndk r16
-    if not bindir then
+    local llvm_toolchain
+    local prebuilt = (is_host("macosx") and "darwin" or os.host()) .. "-x86_64"
+    local bindir = find_directory("bin", path.join(sdkdir, "toolchains", "llvm", "prebuilt", prebuilt)) -- larger than ndk r16
+    if bindir then
+        llvm_toolchain = path.directory(bindir)
+    else
         bindir = find_directory("bin", path.join(sdkdir, "toolchains", gcc_toolchain_subdir, "prebuilt", "*"))
     end
     if not bindir then
@@ -231,6 +242,7 @@ function _find_ndk(sdkdir, arch, ndk_sdkver, ndk_toolchains_ver)
             bindir = bindir,
             cross = cross,
             sdkver = sdkver,
+            llvm_toolchain = llvm_toolchain, -- >= ndk r22
             gcc_toolchain = gcc_toolchain,
             toolchains_ver = toolchains_ver,
             sysroot = sysroot}
@@ -264,27 +276,20 @@ function main(sdkdir, opt)
     end
 
     -- get arch
-    local arch = opt.arch or config.get("arch") or "armv7-a"
+    local arch = opt.arch or config.get("arch") or "armeabi-v7a"
 
     -- find ndk
     local ndk = _find_ndk(sdkdir or config.get("ndk") or global.get("ndk"), arch, opt.sdkver or config.get("ndk_sdkver"), opt.toolchains_ver or config.get("ndk_toolchains_ver"))
     if ndk and ndk.sdkdir then
-
-        -- save to config
         config.set("ndk", ndk.sdkdir, {force = true, readonly = true})
         config.set("ndkver", ndk.ndkver, {force = true, readonly = true})
         config.set("ndk_sdkver", ndk.sdkver, {force = true, readonly = true})
         config.set("ndk_toolchains_ver", ndk.toolchains_ver, {force = true, readonly = true})
-
-        -- trace
         if opt.verbose or option.get("verbose") then
             cprint("checking for NDK directory ... ${color.success}%s", ndk.sdkdir)
             cprint("checking for SDK version of NDK ... ${color.success}%s", ndk.sdkver)
-            cprint("checking for toolchains version of NDK ... ${color.success}%s", ndk.toolchains_ver)
         end
     else
-
-        -- trace
         if opt.verbose or option.get("verbose") then
             cprint("checking for NDK directory ... ${color.nothing}${text.nothing}")
         end

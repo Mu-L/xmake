@@ -26,7 +26,9 @@ import("core.platform.platform")
 import("install")
 
 -- install
-function main(targetname, installdir, prefix)
+function main(targetname, group_pattern, installdir, prefix)
+
+    local verbose = option.get("verbose")
 
     -- enter project directory
     os.cd(project.directory())
@@ -40,6 +42,9 @@ function main(targetname, installdir, prefix)
     -- save the current option and push a new option context
     option.save()
 
+    -- preserve verbose option
+    option.set("verbose", verbose)
+
     -- pass installdir to option
     if installdir then
         option.set("installdir", installdir)
@@ -51,7 +56,7 @@ function main(targetname, installdir, prefix)
     end
 
     -- install target
-    install(targetname)
+    install(targetname, group_pattern)
 
     -- restore the previous option context
     option.restore()

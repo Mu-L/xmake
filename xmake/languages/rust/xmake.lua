@@ -18,72 +18,82 @@
 -- @file        xmake.lua
 --
 
--- define language
 language("rust")
-
-    -- set source file kinds
-    set_sourcekinds {rc = ".rs"}
-
-    -- set source file flags
-    set_sourceflags {rc = "rcflags"}
-
-    -- set target kinds
-    set_targetkinds {binary = "rcld", static = "rcar", shared = "rcsh"}
-
-    -- set target flags
-    set_targetflags {binary = "ldflags", static = "arflags", shared = "shflags"}
-
-    -- set language kinds
-    set_langkinds {rust = "rc"}
-
-    -- set mixing kinds
-    set_mixingkinds("rc")
-
-    -- add rules
     add_rules("rust")
+    set_sourcekinds {rc = ".rs"}
+    set_sourceflags {rc = "rcflags"}
+    set_targetkinds {binary = "rcld", static = "rcar", shared = "rcsh"}
+    set_targetflags {binary = "ldflags", static = "arflags", shared = "shflags"}
+    set_langkinds {rust = "rc"}
+    set_mixingkinds("rc", "cc", "cxx")
 
-    -- on load
     on_load("load")
-
-    -- on check_main
     on_check_main("check_main")
 
-    -- set name flags
-    set_nameflags
-    {
-        object =
-        {
+    set_nameflags {
+        object = {
             "target.symbols"
         ,   "target.warnings"
         ,   "target.optimize:check"
         ,   "target.vectorexts:check"
         }
-    ,   binary =
-        {
+    ,   binary = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
         ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
         ,   "toolchain.linkdirs"
+        ,   "toolchain.frameworkdirs"
         ,   "toolchain.rpathdirs"
+        ,   "config.frameworks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
+        ,   "config.links"
+        ,   "target.links"
+        ,   "toolchain.links"
+        ,   "config.syslinks"
+        ,   "target.syslinks"
+        ,   "toolchain.syslinks"
         }
-    ,   shared =
-        {
+    ,   shared = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
+        ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
         ,   "toolchain.linkdirs"
+        ,   "toolchain.frameworkdirs"
+        ,   "toolchain.rpathdirs"
+        ,   "config.frameworks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
+        ,   "config.links"
+        ,   "target.links"
+        ,   "toolchain.links"
+        ,   "config.syslinks"
+        ,   "target.syslinks"
+        ,   "toolchain.syslinks"
         }
-    ,   static =
-        {
-            "target.strip"
+    ,   static = {
+            "config.linkdirs"
+        ,   "config.frameworkdirs"
+        ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
+        ,   "target.strip"
         ,   "target.symbols"
+        ,   "toolchain.linkdirs"
+        ,   "toolchain.frameworkdirs"
+        ,   "config.frameworks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
         }
     }
 
-    -- set menu
     set_menu {
                 config =
                 {

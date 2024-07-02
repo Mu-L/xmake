@@ -28,6 +28,20 @@ import("core.language.language")
 import("lib.detect.find_file")
 import("lib.detect.find_library")
 
+-- deduplicate values
+function _deduplicate_values(values)
+    for _, k in ipairs(table.keys(values)) do
+        local v = values[k]
+        if type(v) == "table" then
+            if k == "links" or k == "syslinks" or k == "frameworks" then
+                values[k] = table.reverse_unique(v)
+            else
+                values[k] = table.unique(v)
+            end
+        end
+    end
+end
+
 -- find package from the repository (maybe only include and no links)
 function _find_package_from_repo(name, opt)
 
@@ -38,7 +52,11 @@ function _find_package_from_repo(name, opt)
 
     -- find the manifest file of package, e.g. ~/.xmake/packages/z/zlib/1.1.12/ed41d5327fad3fc06fe376b4a94f62ef/manifest.txt
     local packagedirs = {}
-    table.insert(packagedirs, path.join(package.installdir(), name:lower():sub(1, 1), name:lower(), opt.require_version, opt.buildhash))
+    if opt.installdir then
+        table.insert(packagedirs, opt.installdir)
+    else
+        table.insert(packagedirs, path.join(package.installdir(), name:lower():sub(1, 1), name:lower(), opt.require_version, opt.buildhash))
+    end
     local manifest_file = find_file("manifest.txt", packagedirs)
     if not manifest_file then
         return
@@ -72,44 +90,81 @@ function _find_package_from_repo(name, opt)
     -- get links and link directories
     local links = {}
     local linkdirs = {}
-    local libfiles = {}
-    for _, linkdir in ipairs(vars.linkdirs) do
-        table.insert(linkdirs, path.join(installdir, linkdir))
-    end
+    local components = opt.components
     if vars.links then
         table.join2(links, vars.links)
-    end
-    if not vars.linkdirs or not vars.links then
+    elseif components and manifest.components then
+        -- get links from components
+        local vars = manifest.components.vars
+        if vars then
+            for _, component_name in ipairs(components) do
+                local component_vars = vars[component_name]
+                if component_vars and component_vars.links then
+                    table.join2(links, component_vars.links)
+                end
+            end
+        end
+        links = table.reverse_unique(links)
+    else
+        -- we scan links automatically
+        local symrefs = {}
+        local libfiles = {}
+        for _, libdir in ipairs(vars.linkdirs or "lib") do
+            for _, file in ipairs(os.files(path.join(installdir, libdir, "*"))) do
+                table.insert(libfiles, file)
+                if os.islink(file) then
+                    local reallink = os.readlink(file)
+                    if reallink then
+                        symrefs[reallink] = file
+                    end
+                end
+            end
+        end
         local found = false
-        for _, file in ipairs(os.files(path.join(installdir, "lib", "*"))) do
+        for _, file in ipairs(libfiles) do
             if file:endswith(".lib") or file:endswith(".a") then
                 found = true
-                if not vars.linkdirs then
-                    table.insert(linkdirs, path.directory(file))
-                end
-                if not vars.links then
-                    table.insert(links, target.linkname(path.filename(file)))
-                end
+                table.insert(links, target.linkname(path.filename(file), {plat = opt.plat}))
             end
         end
         if not found then
-            for _, file in ipairs(os.files(path.join(installdir, "lib", "*"))) do
-                if file:endswith(".so") or file:endswith(".dylib") then
-                    if not vars.linkdirs then
-                        table.insert(linkdirs, path.directory(file))
-                    end
-                    if not vars.links then
-                        table.insert(links, target.linkname(path.filename(file)))
+            for _, file in ipairs(libfiles) do
+                -- if this library file has been referenced (libfoo.so.1), e.g. libfoo.so -> libfoo.so.1,
+                -- we need ignore it and only use -lfoo
+                local filename = path.filename(file)
+                if not symrefs[filename] then
+                    if file:endswith(".so") or file:match(".+%.so%..+$") or file:endswith(".dylib") then
+                        table.insert(links, target.linkname(path.filename(file), {plat = opt.plat}))
                     end
                 end
             end
         end
     end
-    if opt.plat == "windows" then
-        for _, file in ipairs(os.files(path.join(installdir, "lib", "*.dll"))) do
-            table.insert(libfiles, file)
+    if #links > 0 then
+        for _, libdir in ipairs(vars.linkdirs or "lib") do
+            table.insert(linkdirs, path.join(installdir, libdir))
         end
+    end
+
+    -- get libfiles
+    local libfiles = {}
+    for _, libdir in ipairs(vars.linkdirs or "lib") do
+        for _, file in ipairs(os.files(path.join(installdir, libdir, "*"))) do
+            if file:endswith(".lib") or file:endswith(".a") then
+                result.static = true
+                table.insert(libfiles, file)
+            end
+        end
+        for _, file in ipairs(os.files(path.join(installdir, libdir, "*"))) do
+            if file:endswith(".so") or file:match(".+%.so%..+$") or file:endswith(".dylib") or file:endswith("*.dll") then
+                result.shared = true
+                table.insert(libfiles, file)
+            end
+        end
+    end
+    if opt.plat == "windows" or opt.plat == "mingw" then
         for _, file in ipairs(os.files(path.join(installdir, "bin", "*.dll"))) do
+            result.shared = true
             table.insert(libfiles, file)
         end
     end
@@ -126,7 +181,7 @@ function _find_package_from_repo(name, opt)
 
     -- find library
     for _, link in ipairs(links) do
-        local libinfo = find_library(link, linkdirs)
+        local libinfo = find_library(link, linkdirs, {plat = opt.plat})
         if libinfo then
             if libinfo.kind == "shared" then
                 result.shared = true
@@ -139,34 +194,58 @@ function _find_package_from_repo(name, opt)
             result.libfiles = table.join(result.libfiles or {}, path.join(libinfo.linkdir, libinfo.filename))
         end
     end
-    if result.links then
-        result.links = table.unique(result.links)
-    end
     if result.libfiles then
         result.libfiles = table.join(result.libfiles, libfiles)
     end
 
     -- inherit the other prefix variables
+    local components_base = {includedirs = table.clone(result.includedirs), linkdirs = table.clone(result.linkdirs)}
     for name, values in pairs(vars) do
         if name ~= "links" and name ~= "linkdirs" and name ~= "includedirs" then
             result[name] = values
+            components_base[name] = table.clone(values)
         end
     end
 
-    -- update the project references file
-    if result then
-        local projectdir = os.projectdir()
-        if projectdir and os.isdir(projectdir) then
-            local references_file = path.join(installdir, "references.txt")
-            local references = os.isfile(references_file) and io.load(references_file) or {}
-            references[projectdir] = os.date("%y%m%d")
-            io.save(references_file, references)
+    -- get component values
+    if components and manifest.components then
+        local vars = manifest.components.vars
+        if vars then
+            _deduplicate_values(components_base)
+            result.components = result.components or {}
+            result.components.__base = components_base
+            for _, component_name in ipairs(components) do
+                local comp = vars[component_name]
+                if comp then
+                    result.components[component_name] = comp
+
+                    -- merge component values to root
+                    for k, v in pairs(comp) do
+                        if k ~= "links" then
+                            result[k] = table.join(result[k] or {}, v)
+                        end
+                    end
+                end
+            end
         end
+    end
+
+    -- deduplicate result
+    _deduplicate_values(result)
+
+    -- update the project references file
+    local projectdir = os.projectdir()
+    if projectdir and os.isdir(projectdir) then
+        local references_file = path.join(installdir, "references.txt")
+        local references = os.isfile(references_file) and io.load(references_file) or {}
+        references[projectdir] = os.date("%y%m%d")
+        io.save(references_file, references)
     end
 
     -- get version and license
     result.version = manifest.version or path.filename(path.directory(path.directory(manifest_file)))
     result.license = manifest.license
+    result.extras  = manifest.extras
     return result
 end
 
@@ -197,16 +276,11 @@ function _find_package_from_packagedirs(name, opt)
 
     -- register filter handler
     interp:filter():register("find_package", function (variable)
-
-        -- init maps
-        local maps =
-        {
-            arch       = opt.arch
-        ,   plat       = opt.plat
-        ,   mode       = opt.mode
+        local maps = {
+            arch = opt.arch
+        ,   plat = opt.plat
+        ,   mode = opt.mode
         }
-
-        -- get variable
         return maps[variable]
     end)
 
@@ -243,7 +317,7 @@ function _find_package_from_packagedirs(name, opt)
     -- find library
     local result = nil
     for _, link in ipairs(packageinfo:get("links")) do
-        local libinfo = find_library(link, linkdirs)
+        local libinfo = find_library(link, linkdirs, {plat = opt.plat})
         if libinfo then
             result          = result or {}
             result.links    = table.join(result.links or {}, libinfo.link)
@@ -262,8 +336,6 @@ function _find_package_from_packagedirs(name, opt)
             result[infoname] = packageinfo:get(infoname)
         end
     end
-
-    -- ok?
     return result
 end
 
@@ -281,5 +353,6 @@ function main(name, opt)
     if not result and opt.packagedirs then
         result = _find_package_from_packagedirs(name, opt)
     end
+
     return result
 end

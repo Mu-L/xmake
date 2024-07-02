@@ -24,6 +24,7 @@ local _instance   = _instance or {}
 
 -- load modules
 local io        = require("base/io")
+local libc      = require("base/libc")
 local bytes     = require("base/bytes")
 local table     = require("base/table")
 local string    = require("base/string")
@@ -44,6 +45,10 @@ socket.EV_RECV = 1
 socket.EV_SEND = 2
 socket.EV_CONN = socket.EV_SEND
 socket.EV_ACPT = socket.EV_RECV
+
+-- the socket control code
+socket.CTRL_SET_RECVBUFF = 2
+socket.CTRL_SET_SENDBUFF = 4
 
 -- new a socket
 function _instance.new(socktype, family, sock)
@@ -90,6 +95,40 @@ function _instance:rawfd()
         errors = string.format("%s: %s", self, errors)
     end
     return result, errors
+end
+
+-- get socket peer address
+function _instance:peeraddr()
+
+    -- ensure opened
+    local ok, errors = self:_ensure_opened()
+    if not ok then
+        return nil, errors
+    end
+
+    -- get peer address
+    local result, errors = io.socket_peeraddr(self:cdata())
+    if not result and errors then
+        errors = string.format("%s: %s", self, errors)
+    end
+    return result, errors
+end
+
+-- control socket
+function _instance:ctrl(code, value)
+
+    -- ensure opened
+    local ok, errors = self:_ensure_opened()
+    if not ok then
+        return -1, errors
+    end
+
+    -- control it
+    local ok, errors = io.socket_ctrl(self:cdata(), code, value)
+    if not ok and errors then
+        errors = string.format("%s: %s", self, errors)
+    end
+    return ok, errors
 end
 
 -- bind socket
@@ -191,6 +230,12 @@ function _instance:connect(addr, port, opt)
     local ok, errors = io.socket_connect(self:cdata(), addr, port, self:family())
     if ok == 0 then
         opt = opt or {}
+
+        -- trace socket
+        if socket._is_tracing_socket() then
+            print(string.format("%s: connecting %s:%d, timeout: %d", self, addr, port, opt.timeout or -1))
+        end
+
         local events, waiterrs = _instance.wait(self, socket.EV_CONN, opt.timeout or -1)
         if events == socket.EV_CONN then
             ok, errors = io.socket_connect(self:cdata(), addr, port, self:family())
@@ -244,21 +289,22 @@ function _instance:send(data, opt)
         return -1, errors
     end
 
-    -- data is bytes? unpack the raw address
-    local datasize = #data
-    if type(data) == "table" and data.caddr then
-        datasize = data:size()
-        data = {data = data:caddr(), size = data:size()}
+    -- get data address and size for bytes and string
+    if type(data) == "string" then
+        data = bytes(data)
     end
+    local datasize = data:size()
+    local dataaddr = data:caddr()
 
     -- init start and last
     opt = opt or {}
     local start = opt.start or 1
     local last = opt.last or datasize
-
-    -- check start and last
-    if start > last or start < 1 then
-        return -1, string.format("%s: invalid start(%d) and last(%d)!", self, start, last)
+    if start < 1 or start > datasize then
+        return -1, string.format("%s: invalid start(%d)!", self, start)
+    end
+    if last < start - 1 or last > datasize + start - 1 then
+        return -1, string.format("%s: invalid last(%d)!", self, last)
     end
 
     -- send it
@@ -269,7 +315,7 @@ function _instance:send(data, opt)
     if opt.block then
         local size = last + 1 - start
         while start <= last do
-            real, errors = io.socket_send(self:cdata(), data, start, last)
+            real, errors = io.socket_send(self:cdata(), dataaddr + start - 1, last + 1 - start)
             if real > 0 then
                 send = send + real
                 start = start + real
@@ -278,6 +324,8 @@ function _instance:send(data, opt)
                 local events, waiterrs = _instance.wait(self, socket.EV_SEND, opt.timeout or -1)
                 if events == socket.EV_SEND then
                     wait = true
+                elseif events == 0 then
+                    os.raise("%s: send timeout!", self)
                 else
                     errors = waiterrs
                     break
@@ -290,7 +338,7 @@ function _instance:send(data, opt)
             send = -1
         end
     else
-        send, errors = io.socket_send(self:cdata(), data, start, last)
+        send, errors = io.socket_send(self:cdata(), dataaddr + start - 1, last + 1 - start)
         if send < 0 and errors then
             errors = string.format("%s: %s", self, errors)
         end
@@ -311,6 +359,11 @@ function _instance:sendfile(file, opt)
     local ok, errors = file:_ensure_opened()
     if not ok then
         return -1, errors
+    end
+
+    -- empty file?
+    if file:size() == 0 then
+        return -1, string.format("%s: send empty file!", self)
     end
 
     -- init start and last
@@ -340,6 +393,8 @@ function _instance:sendfile(file, opt)
                 local events, waiterrs = _instance.wait(self, socket.EV_SEND, opt.timeout or -1)
                 if events == socket.EV_SEND then
                     wait = true
+                elseif events == 0 then
+                    os.raise("%s: sendfile timeout!", self)
                 else
                     errors = waiterrs
                     break
@@ -361,12 +416,19 @@ function _instance:sendfile(file, opt)
 end
 
 -- recv data from socket
-function _instance:recv(size, opt)
+function _instance:recv(buff, size, opt)
+    assert(buff)
 
     -- ensure opened
     local ok, errors = self:_ensure_opened()
     if not ok then
         return -1, errors
+    end
+
+    -- check buffer
+    size = size or buff:size()
+    if buff:size() < size then
+        return -1, string.format("%s: too small buffer!", self)
     end
 
     -- check size
@@ -376,26 +438,31 @@ function _instance:recv(size, opt)
         return -1, string.format("%s: invalid size(%d)!", self, size)
     end
 
-    -- recv it
+    -- init start in buffer
     opt = opt or {}
+    local start = opt.start or 1
+    local pos = start - 1
+    if start >= buff:size() or start < 1 then
+        return -1, string.format("%s: invalid start(%d)!", self, start)
+    end
+
+    -- recv it
     local recv = 0
     local real = 0
     local wait = false
     local data_or_errors = nil
     if opt.block then
-        local results = {}
         while recv < size do
-            local buff = self:_recvbuff()
-            real, data_or_errors = io.socket_recv(self:cdata(), buff:caddr(), math.min(buff:size(), size - recv))
+            real, data_or_errors = io.socket_recv(self:cdata(), buff:caddr() + pos + recv, math.min(buff:size() - pos - recv, size - recv))
             if real > 0 then
                 recv = recv + real
                 wait = false
-                table.insert(results, bytes(buff, 1, real))
-                self:_recvbuff_clear()
             elseif real == 0 and not wait then
                 local events, waiterrs = _instance.wait(self, socket.EV_RECV, opt.timeout or -1)
                 if events == socket.EV_RECV then
                     wait = true
+                elseif events == 0 then
+                    os.raise("%s: recv timeout!", self)
                 else
                     data_or_errors = waiterrs
                     break
@@ -405,16 +472,14 @@ function _instance:recv(size, opt)
             end
         end
         if recv == size then
-            data_or_errors = bytes(results)
+            data_or_errors = buff:slice(start, recv)
         else
             recv = -1
         end
     else
-        local buff = self:_recvbuff()
-        recv, data_or_errors = io.socket_recv(self:cdata(), buff:caddr(), math.min(buff:size(), size))
+        recv, data_or_errors = io.socket_recv(self:cdata(), buff:caddr() + pos, math.min(buff:size() - pos, size))
         if recv > 0 then
-            data_or_errors = bytes(buff, 1, recv)
-            self:_recvbuff_clear()
+            data_or_errors = buff:slice(start, recv)
         end
     end
     if recv < 0 and data_or_errors then
@@ -442,19 +507,31 @@ function _instance:sendto(data, addr, port, opt)
         return -1, string.format("%s: sendto empty address!", self)
     end
 
-    -- data is bytes? unpack the raw address
-    if type(data) == "table" and data.caddr then
-        data = {data = data:caddr(), size = data:size()}
+    -- get data address and size for bytes and string
+    if type(data) == "string" then
+        data = bytes(data)
+    end
+    local datasize = data:size()
+    local dataaddr = data:caddr()
+
+    -- init start and last
+    opt = opt or {}
+    local start = opt.start or 1
+    local last = opt.last or datasize
+    if start < 1 or start > datasize then
+        return -1, string.format("%s: invalid start(%d)!", self, start)
+    end
+    if last < start - 1 or last > datasize + start - 1 then
+        return -1, string.format("%s: invalid last(%d)!", self, last)
     end
 
     -- send it
-    opt = opt or {}
     local send = 0
     local wait = false
     local errors = nil
     if opt.block then
         while true do
-            send, errors = io.socket_sendto(self:cdata(), data, addr, port, self:family())
+            send, errors = io.socket_sendto(self:cdata(), dataaddr + start - 1, last + 1 - start, addr, port, self:family())
             if send == 0 and not wait then
                 local events, waiterrs = _instance.wait(self, socket.EV_SEND, opt.timeout or -1)
                 if events == socket.EV_SEND then
@@ -468,7 +545,7 @@ function _instance:sendto(data, addr, port, opt)
             end
         end
     else
-        send, errors = io.socket_sendto(self:cdata(), data, addr, port, self:family())
+        send, errors = io.socket_sendto(self:cdata(), dataaddr + start - 1, last + 1 - start, addr, port, self:family())
         if send < 0 and errors then
             errors = string.format("%s: %s", self, errors)
         end
@@ -477,7 +554,8 @@ function _instance:sendto(data, addr, port, opt)
 end
 
 -- recv udp data from peer
-function _instance:recvfrom(size, opt)
+function _instance:recvfrom(buff, size, opt)
+    assert(buff)
 
     -- ensure opened
     local ok, errors = self:_ensure_opened()
@@ -490,6 +568,12 @@ function _instance:recvfrom(size, opt)
         return -1, string.format("%s: sendto() only for udp socket!", self)
     end
 
+    -- check buffer
+    size = size or buff:size()
+    if buff:size() < size then
+        return -1, string.format("%s: too small buffer!", self)
+    end
+
     -- check size
     if size == 0 then
         return 0
@@ -497,18 +581,23 @@ function _instance:recvfrom(size, opt)
         return -1, string.format("%s: invalid size(%d)!", self, size)
     end
 
-    -- recv it
+    -- init start in buffer
     opt = opt or {}
+    local start = opt.start or 1
+    local pos = start - 1
+    if start >= buff:size() or start < 1 then
+        return -1, string.format("%s: invalid start(%d)!", self, start)
+    end
+
+    -- recv it
     local recv = 0
     local wait = false
     local data_or_errors = nil
     if opt.block then
         while true do
-            local buff = self:_recvbuff()
-            recv, data_or_errors, addr, port = io.socket_recvfrom(self:cdata(), buff:caddr(), math.min(buff:size(), size))
+            recv, data_or_errors, addr, port = io.socket_recvfrom(self:cdata(), buff:caddr() + pos, math.min(buff:size() - pos, size))
             if recv > 0 then
-                data_or_errors = bytes(buff, 1, recv)
-                self:_recvbuff_clear()
+                data_or_errors = buff:slice(start, recv)
                 break
             elseif recv == 0 and not wait then
                 local events, waiterrs = _instance.wait(self, socket.EV_RECV, opt.timeout or -1)
@@ -524,11 +613,9 @@ function _instance:recvfrom(size, opt)
             end
         end
     else
-        local buff = self:_recvbuff()
-        recv, data_or_errors, addr, port = io.socket_recvfrom(self:cdata(), buff:caddr(), math.min(buff:size(), size))
+        recv, data_or_errors, addr, port = io.socket_recvfrom(self:cdata(), buff:caddr() + pos, math.min(buff:size() - pos, size))
         if recv > 0 then
-            data_or_errors = bytes(buff, 1, recv)
-            self:_recvbuff_clear()
+            data_or_errors = buff:slice(start, recv)
         end
     end
     if recv < 0 and data_or_errors then
@@ -560,6 +647,20 @@ function _instance:wait(events, timeout)
     return result, errors
 end
 
+-- kill socket
+function _instance:kill()
+
+    -- ensure opened
+    local ok, errors = self:_ensure_opened()
+    if not ok then
+        return false, errors
+    end
+
+    -- kill it
+    io.socket_kill(self:cdata())
+    return true
+end
+
 -- close socket
 function _instance:close()
 
@@ -585,21 +686,6 @@ function _instance:close()
     return ok
 end
 
--- get the recv buffer
-function _instance:_recvbuff()
-    local recvbuff = self._RECVBUFF
-    if not recvbuff then
-        recvbuff = bytes(8192)
-        self._RECVBUFF = recvbuff
-    end
-    return recvbuff
-end
-
--- clear the recv buffer
-function _instance:_recvbuff_clear()
-    self._RECVBUFF = nil
-end
-
 -- ensure the socket is opened
 function _instance:_ensure_opened()
     if not self:cdata() then
@@ -610,7 +696,7 @@ end
 
 -- tostring(socket)
 function _instance:__tostring()
-    local rawfd = self:rawfd() or "closed"
+    local rawfd = self:cdata() and self:rawfd() or "closed"
     local types = {"tcp", "udp", "icmp"}
     return string.format("<socket: %s%s/%s>", types[self:type()], self:family() == socket.IPV6 and "6" or "4", rawfd)
 end
@@ -620,6 +706,23 @@ function _instance:__gc()
     if self:cdata() and io.socket_close(self:cdata()) then
         self._SOCK = nil
     end
+end
+
+-- trace socket for profile(stuck,trace)?
+function socket._is_tracing_socket()
+    local is_tracing = socket._IS_TRACING_SOCKET
+    if is_tracing == nil then
+        local profile = os.getenv("XMAKE_PROFILE")
+        if profile then
+            profile = profile:trim()
+            if profile == "trace" or profile == "stuck" then
+                is_tracing = true
+            end
+        end
+        is_tracing = is_tracing or false
+        socket._IS_TRACING_SOCKET = is_tracing
+    end
+    return is_tracing
 end
 
 -- open a socket

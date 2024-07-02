@@ -24,7 +24,7 @@ import("core.base.hashset")
 import("core.project.config")
 import("core.project.project")
 import("private.async.jobpool")
-import("private.async.runjobs")
+import("async.runjobs")
 import("kinds.object")
 
 -- match source files
@@ -114,7 +114,7 @@ function _add_batchjobs_for_target_and_deps(batchjobs, rootjob, jobrefs, target,
 end
 
 -- get batch jobs
-function _get_batchjobs(targetname, filepatterns)
+function _get_batchjobs(targetname, group_pattern, filepatterns)
 
     -- get root targets
     local targets_root = {}
@@ -124,7 +124,8 @@ function _get_batchjobs(targetname, filepatterns)
         local depset = hashset.new()
         local targets = {}
         for _, target in pairs(project.targets()) do
-            if target:is_default() or option.get("all") then
+            local group = target:get("group")
+            if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
                 for _, depname in ipairs(target:get("deps")) do
                     depset:insert(depname)
                 end
@@ -162,11 +163,7 @@ function _get_file_patterns(sourcefiles)
             local _excludes = {}
             for _, exclude in ipairs(excludes) do
                 exclude = path.translate(exclude)
-                exclude = exclude:gsub("([%+%.%-%^%$%(%)%%])", "%%%1")
-                exclude = exclude:gsub("%*%*", "\001")
-                exclude = exclude:gsub("%*", "\002")
-                exclude = exclude:gsub("\001", ".*")
-                exclude = exclude:gsub("\002", "[^/]*")
+                exclude = path.pattern(exclude)
                 table.insert(_excludes, exclude)
             end
             excludes = _excludes
@@ -196,17 +193,19 @@ function _get_file_patterns(sourcefiles)
 end
 
 -- the main entry
-function main(targetname, sourcefiles)
+function main(targetname, group_pattern, sourcefiles)
 
     -- convert all sourcefiles to lua pattern
     local filepatterns = _get_file_patterns(sourcefiles)
 
     -- build all jobs
-    local batchjobs = _get_batchjobs(targetname, filepatterns)
+    local batchjobs = _get_batchjobs(targetname, group_pattern, filepatterns)
     if batchjobs and batchjobs:size() > 0 then
         local curdir = os.curdir()
-        runjobs("build_files", batchjobs, {comax = option.get("jobs") or 1, curdir = curdir, count_as_index = true})
+        runjobs("build_files", batchjobs, {comax = option.get("jobs") or 1, curdir = curdir})
         os.cd(curdir)
+    else
+        wprint("%s not found!", sourcefiles)
     end
 end
 

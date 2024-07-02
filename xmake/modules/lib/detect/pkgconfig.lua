@@ -24,7 +24,15 @@ import("core.project.target")
 import("core.project.config")
 import("lib.detect.find_file")
 import("lib.detect.find_library")
-import("detect.tools.find_pkg_config")
+import("lib.detect.find_tool")
+
+-- get pkgconfig
+function _get_pkgconfig()
+    local pkgconfig = find_tool("pkg-config") or find_tool("pkgconf")
+    if pkgconfig then
+        return pkgconfig.program
+    end
+end
 
 -- get version
 --
@@ -34,7 +42,7 @@ import("detect.tools.find_pkg_config")
 function version(name, opt)
 
     -- attempt to add search paths from pkg-config
-    local pkgconfig = find_pkgconfig()
+    local pkgconfig = _get_pkgconfig()
     if not pkgconfig then
         return
     end
@@ -46,7 +54,7 @@ function version(name, opt)
     local configdirs_old = os.getenv("PKG_CONFIG_PATH")
     local configdirs = table.wrap(opt.configdirs)
     if #configdirs > 0 then
-        os.setenv("PKG_CONFIG_PATH", unpack(configdirs))
+        os.setenv("PKG_CONFIG_PATH", table.unpack(configdirs))
     end
 
     -- get version
@@ -73,7 +81,7 @@ end
 function variables(name, variables, opt)
 
     -- attempt to add search paths from pkg-config
-    local pkgconfig = find_pkgconfig()
+    local pkgconfig = _get_pkgconfig()
     if not pkgconfig then
         return
     end
@@ -85,7 +93,7 @@ function variables(name, variables, opt)
     local configdirs_old = os.getenv("PKG_CONFIG_PATH")
     local configdirs = table.wrap(opt.configdirs)
     if #configdirs > 0 then
-        os.setenv("PKG_CONFIG_PATH", unpack(configdirs))
+        os.setenv("PKG_CONFIG_PATH", table.unpack(configdirs))
     end
 
     -- get variable value
@@ -125,7 +133,7 @@ end
 function libinfo(name, opt)
 
     -- attempt to add search paths from pkg-config
-    local pkgconfig = find_pkg_config()
+    local pkgconfig = _get_pkgconfig()
     if not pkgconfig then
         return
     end
@@ -134,53 +142,70 @@ function libinfo(name, opt)
     opt = opt or {}
 
     -- init PKG_CONFIG_PATH
-    local configdirs_old = os.getenv("PKG_CONFIG_PATH")
+    local envs = {}
     local configdirs = table.wrap(opt.configdirs)
     if #configdirs > 0 then
-        os.setenv("PKG_CONFIG_PATH", unpack(configdirs))
+        envs.PKG_CONFIG_PATH = path.joinenv(configdirs)
     end
 
-    -- get libs and cflags
-    local result = nil
-    local flags = try { function () return os.iorunv(pkgconfig, {"--libs", "--cflags", name}) end }
-    if flags then
-
-        -- init result
-        result = {}
-        for _, flag in ipairs(os.argv(flags)) do
-            if flag:startswith("-L") and #flag > 2 then
-                -- get linkdirs
-                local linkdir = flag:sub(3)
-                if linkdir and os.isdir(linkdir) then
-                    result.linkdirs = result.linkdirs or {}
-                    table.insert(result.linkdirs, linkdir)
-                end
-            elseif flag:startswith("-I") and #flag > 2 then
-                -- get includedirs
+    -- get cflags
+    local found
+    local result = {}
+    local cflags = try {function () return os.iorunv(pkgconfig, {"--cflags", name}, {envs = envs}) end,
+                        catch {function (errs) found = false end}}
+    if cflags then
+        for _, flag in ipairs(os.argv(cflags)) do
+            if flag:startswith("-I") and #flag > 2 then
                 local includedir = flag:sub(3)
                 if includedir and os.isdir(includedir) then
                     result.includedirs = result.includedirs or {}
                     table.insert(result.includedirs, includedir)
                 end
+            elseif flag:startswith("-D") and #flag > 2 then
+                local define = flag:sub(3)
+                result.defines = result.defines or {}
+                table.insert(result.defines, define)
+            elseif flag:startswith("-") and #flag > 1 then
+                result.cxflags = result.cxflags or {}
+                table.insert(result.cxflags, flag)
+            end
+        end
+    end
+
+    -- libinfo may be empty body, but it's also valid
+    -- @see https://github.com/xmake-io/xmake/issues/3777#issuecomment-1568453316
+    if found == false then
+        return
+    end
+
+    -- get libs and ldflags
+    local ldflags = try { function () return os.iorunv(pkgconfig, {"--libs", name}, {envs = envs}) end }
+    if ldflags then
+        for _, flag in ipairs(os.argv(ldflags)) do
+            if flag:startswith("-L") and #flag > 2 then
+                local linkdir = flag:sub(3)
+                if linkdir and os.isdir(linkdir) then
+                    result.linkdirs = result.linkdirs or {}
+                    table.insert(result.linkdirs, linkdir)
+                end
             elseif flag:startswith("-l") and #flag > 2 then
-                -- get links
-                local link = flag:sub(3)
+                -- https://github.com/xmake-io/xmake/issues/4292
+                local link = flag:startswith("-l:") and flag:sub(4) or flag:sub(3)
                 result.links = result.links or {}
                 table.insert(result.links, link)
+            elseif flag:startswith("-") and #flag > 1 then
+                result.ldflags = result.ldflags or {}
+                result.shflags = result.shflags or {}
+                table.insert(result.ldflags, flag)
+                table.insert(result.shflags, flag)
             end
         end
     end
 
     -- get version
-    local version = try { function() return os.iorunv(pkgconfig, {"--modversion", name}) end }
+    local version = try { function() return os.iorunv(pkgconfig, {"--modversion", name}, {envs = envs}) end }
     if version then
-        result = result or {}
         result.version = version:trim()
-    end
-
-    -- restore PKG_CONFIG_PATH
-    if configdirs_old then
-        os.setenv("PKG_CONFIG_PATH", configdirs_old)
     end
     return result
 end

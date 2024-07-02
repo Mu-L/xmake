@@ -19,33 +19,33 @@
 --
 
 -- define toolchain
-toolchain("gcc")
-
-    -- set homepage
-    set_homepage("https://gcc.gnu.org/")
-    set_description("GNU Compiler Collection")
-
-    -- mark as standalone toolchain
+function toolchain_gcc(version)
+local suffix = ""
+if version then
+    suffix = suffix .. "-" .. version
+end
+toolchain("gcc" .. suffix)
     set_kind("standalone")
+    set_homepage("https://gcc.gnu.org/")
+    set_description("GNU Compiler Collection" .. (version and (" (" .. version .. ")") or ""))
+    set_runtimes("stdc++_static", "stdc++_shared")
 
-    -- set toolset
-    set_toolset("cc", "gcc")
-    set_toolset("cxx", "gcc", "g++")
-    set_toolset("ld", "g++", "gcc")
-    set_toolset("sh", "g++", "gcc")
+    set_toolset("cc", "gcc" .. suffix)
+    set_toolset("cxx", "gcc" .. suffix, "g++" .. suffix)
+    set_toolset("ld", "g++" .. suffix, "gcc" .. suffix)
+    set_toolset("sh", "g++" .. suffix, "gcc" .. suffix)
     set_toolset("ar", "ar")
-    set_toolset("ex", "ar")
     set_toolset("strip", "strip")
-    set_toolset("mm", "gcc")
-    set_toolset("mxx", "gcc", "g++")
-    set_toolset("as", "gcc")
+    set_toolset("objcopy", "objcopy")
+    set_toolset("ranlib", "ranlib")
+    set_toolset("mm", "gcc" .. suffix)
+    set_toolset("mxx", "gcc" .. suffix, "g++" .. suffix)
+    set_toolset("as", "gcc" .. suffix)
 
-    -- check toolchain
     on_check(function (toolchain)
-        return import("lib.detect.find_tool")("gcc")
+        return import("lib.detect.find_tool")("gcc" .. suffix)
     end)
 
-    -- on load
     on_load(function (toolchain)
 
         -- add march flags
@@ -63,3 +63,5 @@ toolchain("gcc")
             toolchain:add("shflags", march)
         end
     end)
+end
+toolchain_gcc()

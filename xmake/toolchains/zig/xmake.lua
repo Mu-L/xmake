@@ -55,10 +55,15 @@ toolchain("zig")
         -- set toolset
         -- we patch target to `zig cc` to fix has_flags. see https://github.com/xmake-io/xmake/issues/955#issuecomment-766929692
         local zig = toolchain:config("zig") or "zig"
-        toolchain:set("toolset", "cc",    zig .. " cc")
-        toolchain:set("toolset", "cxx",   zig .. " c++")
-        toolchain:set("toolset", "ld",    zig .. " c++")
-        toolchain:set("toolset", "sh",    zig .. " c++")
+        if toolchain:config("zigcc") ~= false then
+            -- we can use `set_toolchains("zig", {zigcc = false})` to disable zigcc
+            -- @see https://github.com/xmake-io/xmake/issues/3251
+            toolchain:set("toolset", "cc",    zig .. " cc")
+            toolchain:set("toolset", "cxx",   zig .. " c++")
+            toolchain:set("toolset", "ld",    zig .. " c++")
+            toolchain:set("toolset", "sh",    zig .. " c++")
+        end
+        toolchain:set("toolset", "ar",   "$(env ZC)", zig)
         toolchain:set("toolset", "zc",   "$(env ZC)", zig)
         toolchain:set("toolset", "zcar", "$(env ZC)", zig)
         toolchain:set("toolset", "zcld", "$(env ZC)", zig)
@@ -73,6 +78,8 @@ toolchain("zig")
             arch = "i386"
         elseif toolchain:is_arch("riscv64") then
             arch = "riscv64"
+        elseif toolchain:is_arch("loong64") then
+            arch = "loong64"
         elseif toolchain:is_arch("mips.*") then
             arch = toolchain:arch()
         elseif toolchain:is_arch("ppc64") then
@@ -91,7 +98,8 @@ toolchain("zig")
             -- xmake f -p cross --toolchain=zig --cross=mips64el-linux-gnuabi64
             target = toolchain:cross()
         elseif toolchain:is_plat("macosx") then
-            target = arch .. "-macos-gnu"
+            --@see https://github.com/ziglang/zig/issues/14226
+            target = arch .. "-macos-none"
         elseif toolchain:is_plat("linux") then
             if arch == "arm" then
                 target = "arm-linux-gnueabi"
@@ -120,6 +128,6 @@ toolchain("zig")
         -- @see https://github.com/ziglang/zig/issues/5825
         if toolchain:is_plat("windows") then
             toolchain:add("zcldflags", "--subsystem console")
-            toolchain:add("syslinks", "kernel32", "ntdll")
+            toolchain:add("zcldflags", "-lkernel32", "-lntdll")
         end
     end)

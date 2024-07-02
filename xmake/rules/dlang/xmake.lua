@@ -18,12 +18,17 @@
 -- @file        xmake.lua
 --
 
--- define rule: dlang.build
 rule("dlang.build")
     set_sourcekinds("dc")
+    add_deps("dlang.build.optimization")
     on_build_files("private.action.build.object", {batch = true})
+    on_load(function (target)
+        local toolchains = target:get("toolchains") or get_config("toolchain")
+        if not toolchains or not table.contains(table.wrap(toolchains), "dlang", "dmd", "ldc", "gdc") then
+            target:add("toolchains", "dlang")
+        end
+    end)
 
--- define rule: dlang
 rule("dlang")
 
     -- add build rules
@@ -38,3 +43,7 @@ rule("dlang")
     -- we attempt to extract symbols to the independent file and
     -- strip self-target binary if `set_symbols("debug")` and `set_strip("all")` are enabled
     add_deps("utils.symbols.extract")
+
+    -- add linker rules
+    add_deps("linker")
+

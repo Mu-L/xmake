@@ -34,7 +34,7 @@ rule("wdk.sign")
     add_deps("wdk.env")
 
     -- before load
-    before_load(function (target)
+    on_load(function (target)
 
         -- imports
         import("core.project.config")
@@ -93,12 +93,12 @@ rule("wdk.sign")
         import("core.project.config")
         import("core.project.depend")
         import("lib.detect.find_file")
-        import("private.utils.progress")
+        import("utils.progress")
 
         -- need build this object?
         local tempfile = os.tmpfile(target:targetfile())
         local dependfile = tempfile .. ".d"
-        local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+        local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile) or {})
         if not depend.is_changed(dependinfo, {lastmtime = os.mtime(tempfile)}) then
             return
         end

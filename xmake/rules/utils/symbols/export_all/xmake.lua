@@ -26,13 +26,17 @@
 -- @see https://github.com/xmake-io/xmake/issues/1123
 --
 rule("utils.symbols.export_all")
-    before_load(function (target)
+    on_config(function (target)
         -- @note it only supports windows/dll now
         assert(target:is_shared(), 'rule("utils.symbols.export_all"): only for shared target(%s)!', target:name())
         if target:is_plat("windows") then
             assert(target:get("optimize") ~= "smallest", 'rule("utils.symbols.export_all"): does not support set_optimize("smallest") for target(%s)!', target:name())
             local allsymbols_filepath = path.join(target:autogendir(), "rules", "symbols", "export_all.def")
-            target:add("shflags", "/def:" .. allsymbols_filepath, {force = true})
+            if target:has_tool("sh", "link") then
+                target:add("shflags", "/def:" .. allsymbols_filepath, {force = true})
+            elseif target:has_tool("sh", "clang", "clangxx") then
+                target:add("shflags", "-Wl,/def:" .. allsymbols_filepath, {force = true})
+            end
         end
     end)
     before_link("export_all")

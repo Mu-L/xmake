@@ -20,97 +20,94 @@
 
 -- imports
 import("lib.detect.find_file")
-import("lib.detect.find_library")
 import("lib.detect.find_tool")
+import("core.base.option")
 import("core.project.config")
 import("core.project.target")
+import("detect.sdks.find_vcpkgdir")
+import("package.manager.vcpkg.configurations")
+import("package.manager.pkgconfig.find_package", {alias = "find_package_from_pkgconfig"})
 
--- find vcpkg root directory
-function _find_vcpkgdir()
-    local vcpkgdir = _g.vcpkgdir
-    if vcpkgdir == nil then
-        local vcpkg = find_tool("vcpkg")
-        if vcpkg then
-            local dir = path.directory(vcpkg.program)
-            if os.isdir(path.join(dir, "installed")) then
-                vcpkgdir = dir
-            elseif is_host("macosx", "linux") then
-                local brew = find_tool("brew")
-                if brew then
-                    dir = try
-                    {
-                        function ()
-                            return os.iorunv(brew.program, {"--prefix", "vcpkg"})
-                        end
-                    }
-                end
-                if dir then
-                    dir = path.join(dir:trim(), "libexec")
-                    if os.isdir(path.join(dir, "installed")) then
-                        vcpkgdir = dir
-                    end
-                end
+-- we iterate over each pkgconfig file to extract the required data
+function _find_package_from_pkgconfig(pkgconfig_files, opt)
+    opt = opt or {}
+    local foundpc = false
+    local result = {includedirs = {}, linkdirs = {}, links = {}}
+    for _, pkgconfig_file in ipairs(pkgconfig_files) do
+        local pkgconfig_dir = path.join(opt.installdir, path.directory(pkgconfig_file))
+        local pkgconfig_name = path.basename(pkgconfig_file)
+        local pcresult = find_package_from_pkgconfig(pkgconfig_name, {configdirs = pkgconfig_dir, linkdirs = opt.linkdirs})
 
+        -- the pkgconfig file has been parse successfully
+        if pcresult then
+            for _, includedir in ipairs(pcresult.includedirs) do
+                table.insert(result.includedirs, includedir)
             end
+            for _, linkdir in ipairs(pcresult.linkdirs) do
+                table.insert(result.linkdirs, linkdir)
+            end
+            for _, link in ipairs(pcresult.links) do
+                table.insert(result.links, link)
+            end
+            -- version should be the same if a pacman package contains multiples .pc
+            result.version = pcresult.version
+            foundpc = true
         end
-        _g.vcpkgdir = vcpkgdir or false
     end
-    return vcpkgdir or nil
+
+    if foundpc == true then
+        result.includedirs = table.unique(result.includedirs)
+        result.linkdirs = table.unique(result.linkdirs)
+        result.links = table.reverse_unique(result.links)
+        return result
+    end
 end
 
--- find package from the vcpkg package manager
---
--- @param name  the package name, e.g. zlib, pcre
--- @param opt   the options, e.g. {verbose = true, version = "1.12.x")
---
-function main(name, opt)
+function _find_package(vcpkgdir, name, opt)
 
-    -- attempt to find vcpkg directory
-    local vcpkgdir = _find_vcpkgdir()
-    if not vcpkgdir then
-        return
-    end
+    -- get configs
+    local configs = opt.configs or {}
 
     -- fix name, e.g. ffmpeg[x264] as ffmpeg
     -- @see https://github.com/xmake-io/xmake/issues/925
     name = name:gsub("%[.-%]", "")
 
-    -- get arch, plat and mode
+    -- init triplet
     local arch = opt.arch
     local plat = opt.plat
     local mode = opt.mode
-    if plat == "macosx" then
-        plat = "osx"
-    end
-    if arch == "x86_64" then
-        arch = "x64"
-    end
+    plat = configurations.plat(plat)
+    arch = configurations.arch(arch)
+    local triplet = configurations.triplet(configs, plat, arch)
 
-    -- get the vcpkg installed directory
-    local installdir = path.join(vcpkgdir, "installed")
-
-    -- get the vcpkg info directory
-    local infodir = path.join(installdir, "vcpkg", "info")
+    -- get the vcpkg info directories
+    local infodirs = {}
+	if opt.installdir then
+        table.join2(infodirs, path.join(opt.installdir, "vcpkg_installed", "vcpkg", "info"))
+	end
+    table.join2(infodirs, path.join(vcpkgdir, "installed", "vcpkg", "info"))
 
     -- find the package info file, e.g. zlib_1.2.11-3_x86-windows[-static].list
-    local triplet = arch .. "-" .. plat
-    local pkgconfigs = opt.pkgconfigs
-    if plat == "windows" and pkgconfigs and pkgconfigs.shared ~= true then
-        triplet = triplet .. "-static"
-        if pkgconfigs.vs_runtime and pkgconfigs.vs_runtime:startswith("MD") then
-            triplet = triplet .. "-md"
-        end
+    local infofile = find_file(format("%s_*_%s.list", name, triplet), infodirs)
+    if not infofile then
+        return
     end
-    local infofile = find_file(format("%s_*_%s.list", name, triplet), infodir)
+    local installdir = path.directory(path.directory(path.directory(infofile)))
 
     -- save includedirs, linkdirs and links
     local result = nil
-    local info = infofile and io.readfile(infofile) or nil
+    local pkgconfig_files = {}
+    local info = io.readfile(infofile)
     if info then
         for _, line in ipairs(info:split('\n')) do
             line = line:trim()
             if plat == "windows" then
                 line = line:lower()
+            end
+
+            -- get pkgconfig files
+            if line:find(triplet .. (mode == "debug" and "/debug" or "") .. "/lib/pkgconfig/", 1, true) and line:endswith(".pc") then
+                table.insert(pkgconfig_files, line)
             end
 
             -- get includedirs
@@ -121,14 +118,14 @@ function main(name, opt)
             end
 
             -- get linkdirs and links
-            if (plat == "windows" and line:endswith(".lib")) or line:endswith(".a") then
+            if (plat == "windows" and line:endswith(".lib")) or line:endswith(".a") or line:endswith(".so") then
                 if line:find(triplet .. (mode == "debug" and "/debug" or "") .. "/lib/", 1, true) then
                     result = result or {}
                     result.links = result.links or {}
                     result.linkdirs = result.linkdirs or {}
                     result.libfiles = result.libfiles or {}
                     table.insert(result.linkdirs, path.join(installdir, path.directory(line)))
-                    table.insert(result.links, target.linkname(path.filename(line)))
+                    table.insert(result.links, target.linkname(path.filename(line), {plat = plat}))
                     table.insert(result.libfiles, path.join(installdir, path.directory(line), path.filename(line)))
                 end
             end
@@ -146,12 +143,23 @@ function main(name, opt)
         end
     end
 
+    -- find result from pkgconfig first
+    if #pkgconfig_files > 0 then
+        local pkgconfig_result = _find_package_from_pkgconfig(pkgconfig_files, {installdir = installdir, linkdirs = result and result.linkdirs})
+        if pkgconfig_result then
+            result = pkgconfig_result
+        end
+    end
+
     -- save version
-    if result and infofile then
+    if result then
         local infoname = path.basename(infofile)
-        result.version = infoname:match(name .. "_(%d+%.?%d*%.?%d*.-)_" .. arch)
+        local prefix = name
+        -- name maybe contains lua pattern characters, we need escape it. e.g. `-`
+        prefix = prefix:gsub("([%+%.%-%^%$%(%)%%])", "%%%1")
+        result.version = infoname:match(prefix .. "_(%d+%.?%d*%.?%d*.-)_" .. arch)
         if not result.version then
-            result.version = infoname:match(name .. "_(%d+%.?%d*%.-)_" .. arch)
+            result.version = infoname:match(prefix .. "_(%d+%.?%d*%.-)_" .. arch)
         end
     end
 
@@ -167,3 +175,23 @@ function main(name, opt)
     return result
 end
 
+-- find package from the vcpkg package manager
+--
+-- @param name  the package name, e.g. zlib, pcre
+-- @param opt   the options, e.g. {verbose = true)
+--
+function main(name, opt)
+    opt = opt or {}
+    local vcpkgdir = find_vcpkgdir()
+    if not vcpkgdir then
+
+        -- we need show warning if we do not try finding package and vcpkg root directory not found.
+        if not opt.try then
+            wprint("vcpkg root directory not found, maybe you need set $VCPKG_ROOT!")
+        end
+        return
+    end
+
+    -- do find package
+    return _find_package(vcpkgdir, name, opt)
+end

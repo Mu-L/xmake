@@ -1,3 +1,0 @@
-    <ClCompile Include="$(XmakeProjectDir)\#path#">
-      <CompileAs>CompileAsCpp</CompileAs>
-    </ClCompile>

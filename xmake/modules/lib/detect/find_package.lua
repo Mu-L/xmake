@@ -24,6 +24,30 @@ import("core.project.config")
 import("core.cache.detectcache")
 import("package.manager.find_package")
 
+-- concat packages
+function _concat_packages(a, b)
+    local result = table.copy(a)
+    for k, v in pairs(b) do
+        local o = result[k]
+        if o ~= nil then
+            v = table.join(o, v)
+        end
+        result[k] = v
+    end
+    for k, v in pairs(result) do
+        if k == "links" then
+            if type(v) == "table" and #v > 1 then
+                -- we need to ensure link orders when removing repeat values
+                v = table.reverse_unique(v)
+            end
+        else
+            v = table.unique(v)
+        end
+        result[k] = v
+    end
+    return result
+end
+
 -- find package using the package manager
 --
 -- @param name  the package name
@@ -88,6 +112,11 @@ function main(name, opt)
         if result and result.includedirs and opt.external then
             result.sysincludedirs = result.includedirs
             result.includedirs = nil
+            local components_base = result.components and result.components.__base
+            if components_base then
+                components_base.sysincludedirs = components_base.includedirs
+                components_base.includedirs = nil
+            end
         end
 
         -- cache result
@@ -112,6 +141,11 @@ function main(name, opt)
     -- does not show version (default)? strip it
     if not opt.version and result then
         result.version = nil
+    end
+
+    -- register concat
+    if result and type(result) == "table" then
+        debug.setmetatable(result, {__concat = _concat_packages})
     end
     return result and result or nil
 end

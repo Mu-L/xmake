@@ -26,6 +26,7 @@ xmake._HOST             = _HOST
 xmake._ARCH             = _ARCH
 xmake._SUBHOST          = _SUBHOST
 xmake._SUBARCH          = _SUBARCH
+xmake._XMAKE_ARCH       = _XMAKE_ARCH
 xmake._VERSION          = _VERSION
 xmake._VERSION_SHORT    = _VERSION_SHORT
 xmake._PROGRAM_DIR      = _PROGRAM_DIR
@@ -34,7 +35,24 @@ xmake._PROJECT_DIR      = _PROJECT_DIR
 xmake._PROJECT_FILE     = "xmake.lua"
 xmake._WORKING_DIR      = os.curdir()
 xmake._FEATURES         = _FEATURES
+xmake._LUAJIT           = _LUAJIT
 
+-- In order to be compatible with updates from lower versions of engine core
+-- @see https://github.com/xmake-io/xmake/issues/1694#issuecomment-925507210
+if xmake._LUAJIT == nil then
+    xmake._LUAJIT = true
+end
+
+-- has debugger?
+if xmake._HAS_DEBUGGER == nil then
+    if os.getenv("EMMYLUA_DEBUGGER") then
+        xmake._HAS_DEBUGGER = true
+    else
+        xmake._HAS_DEBUGGER = false
+    end
+end
+
+-- load the given lua file
 function _loadfile_impl(filepath, mode, opt)
 
     -- init options
@@ -54,6 +72,11 @@ function _loadfile_impl(filepath, mode, opt)
             local projectname = path.filename(xmake._PROJECT_DIR)
             displaypath = path.translate("@projectdir(" .. projectname .. ")/" .. path.relative(filepath, xmake._PROJECT_DIR))
         end
+    end
+
+    -- we use raw file path if debugger is enabled
+    if xmake._HAS_DEBUGGER then
+        displaypath = filepath
     end
 
     -- load script data from file
@@ -112,8 +135,8 @@ function loadfile(filepath, mode, opt)
     return script, errors
 end
 
--- init package path
-table.insert(package.loaders, 2, function(v)
+-- init package path, package.searchers for lua5.4
+table.insert(package.loaders or package.searchers, 2, function(v)
     local filepath = xmake._PROGRAM_DIR .. "/core/" .. v .. ".lua"
     local script, serr = _loadfile_impl(filepath)
     if not script then

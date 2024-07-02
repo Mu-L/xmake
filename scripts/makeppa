@@ -31,15 +31,21 @@ fi
 basename=xmake-$version+$patch$serie
 tarball=$workdir/$basename.tar.gz
 if [ ! -f $tarball ]; then
-    ./scripts/archive-all
+    cd core
+    xmake pack --autobuild=n -y --formats=srctargz --basename=xmake -o ../artifacts xmakesrc || exit -1
+    cd ..
     cp ./artifacts/xmake.tar.gz $tarball
 fi
 
 # extract tarball
 cd $workdir
+if [ -d xmakesrc ]; then
+    rm -rf xmakesrc
+fi
 if [ ! -d $basename ]; then
-    mkdir $basename 
-    tar -xvf $basename.tar.gz -C $basename 
+    mkdir xmakesrc
+    tar -xvf $basename.tar.gz -C xmakesrc
+    mv xmakesrc/xmake-$version $basename
 fi
 
 # enter project directory
@@ -67,7 +73,7 @@ cat debian/changelog
 
 # build package
 echo "building package .."
-debuild -S -k2C0C68C9
+debuild -S -k02713554FA2CE4AADA20AB23167A22F22C0C68C9
 
 # check package
 echo "checking package .."
@@ -76,7 +82,7 @@ lintian ../xmake_$version+$patch$serie.dsc
 # upload package
 echo "uploading package .."
 source=xmake_$version+"$patch$serie"_source
-if [ -f ../$source.ppa.upload ]; then 
+if [ -f ../$source.ppa.upload ]; then
     rm ../$source.ppa.upload
 fi
 dput ppa:xmake-io/xmake ../$source.changes
@@ -116,4 +122,7 @@ rm -rf xmake-ppa
 # recv and import key on ubuntu
 # gpg --keyserver keyserver.ubuntu.com --recv 2C0C68C9
 # gpg --export --armor 2C0C68C9 | sudo apt-key add -
+#
+# show long key
+# gpg --keyid-format long --list-keys waruqi@gmail.com
 #

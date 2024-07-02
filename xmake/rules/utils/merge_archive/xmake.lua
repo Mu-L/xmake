@@ -18,12 +18,57 @@
 -- @file        xmake.lua
 --
 
--- define rule: utils.merge.archive
 rule("utils.merge.archive")
-
-    -- set extensions
     set_extensions(".a", ".lib")
-
-    -- on build file
-    on_build_files("merge_archive")
+    after_load(function (target)
+        -- we need to disable inherit links if all static deps have been merged
+        -- and we must disable it in after_load, because it will be called before rule(utils.inherit.links).on_config
+        --
+        -- @see https://github.com/xmake-io/xmake/issues/3404
+        if target:policy("build.merge_archive") then
+            for _, dep in ipairs(target:orderdeps()) do
+                if dep:is_static() then
+                    dep:data_set("inherit.links.deplink", false)
+                end
+            end
+        end
+    end)
+    on_build_files(function (target, sourcebatch, opt)
+        if sourcebatch.sourcefiles then
+            target:data_set("merge_archive.sourcefiles", sourcebatch.sourcefiles)
+        end
+    end)
+    after_link(function (target, opt)
+        if not target:is_static() then
+            return
+        end
+        local sourcefiles = target:data("merge_archive.sourcefiles")
+        if target:policy("build.merge_archive") or sourcefiles then
+            import("utils.archive.merge_staticlib")
+            import("core.project.depend")
+            import("utils.progress")
+            local libraryfiles = {}
+            if sourcefiles then
+                table.join2(libraryfiles, sourcefiles)
+            else
+                for _, dep in ipairs(target:orderdeps()) do
+                    if dep:is_static() then
+                        table.insert(libraryfiles, dep:targetfile())
+                    end
+                end
+            end
+            if #libraryfiles > 0 then
+                table.insert(libraryfiles, target:targetfile())
+            end
+            depend.on_changed(function ()
+                progress.show(opt.progress, "${color.build.target}merging.$(mode) %s", path.filename(target:targetfile()))
+                if #libraryfiles > 0 then
+                    local tmpfile = os.tmpfile() .. path.extension(target:targetfile())
+                    merge_staticlib(target, tmpfile, libraryfiles)
+                    os.cp(tmpfile, target:targetfile())
+                    os.rm(tmpfile)
+                end
+            end, {dependfile = target:dependfile(target:targetfile() .. ".merge_archive"), files = libraryfiles, changed = target:is_rebuilt()})
+        end
+    end)
 

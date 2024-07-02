@@ -21,12 +21,41 @@
 -- inherit gcc
 inherit("gcc")
 
+-- make the optimize flag
+--
+-- same options must be used at compile and link, @see https://github.com/xmake-io/xmake/issues/2455
+-- https://emscripten.org/docs/compiling/Building-Projects.html?highlight=optimization#building-projects-optimizations
+function nf_optimize(self, level)
+    local maps = {
+        none       = "-O0"
+    ,   fast       = "-O1"
+    ,   faster     = "-O2"
+    ,   fastest    = "-O3"
+    ,   smallest   = "-Os"
+    ,   aggressive = "-O3"
+    }
+    return maps[level]
+end
+
 -- make the strip flag
 function nf_strip(self, level)
 end
 
 -- make the rpathdir flag
 function nf_rpathdir(self, dir)
+end
+
+-- make the symbol flag
+function nf_symbol(self, level)
+    local kind = self:kind()
+    if kind == "ld" or kind == "sh" then
+        -- emscripten requires -g when linking to map JS/wasm code back to original source
+        if level == "debug" then
+            return "-g"
+        end
+    end
+
+    return _super.nf_symbol(self, level)
 end
 
 -- make the link arguments list

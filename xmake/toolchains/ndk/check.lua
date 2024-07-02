@@ -49,6 +49,7 @@ function _check_ndk(toolchain)
         toolchain:config_set("ndk", ndk.sdkdir)
         toolchain:config_set("bindir", ndk.bindir)
         toolchain:config_set("cross", ndk.cross)
+        toolchain:config_set("llvm_toolchain", ndk.llvm_toolchain)
         toolchain:config_set("gcc_toolchain", ndk.gcc_toolchain)
         toolchain:config_set("ndkver", ndk.ndkver)
         toolchain:config_set("ndk_sdkver", ndk.sdkver)
@@ -57,7 +58,7 @@ function _check_ndk(toolchain)
         toolchain:configs_save()
         return true
     else
-        --[[TODO we need also add this tips when use remote ndk toolchain
+        --[[TODO we also need to add this tips when use remote ndk toolchain
         -- failed
         cprint("${bright color.error}please run:")
         cprint("    - xmake config --ndk=xxx")

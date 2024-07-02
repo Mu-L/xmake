@@ -20,12 +20,39 @@
 
 -- imports
 import("core.base.option")
+import("core.base.hashset")
 import("core.project.project")
 import("private.tools.vstool")
 
+-- normailize path of a dependecy
+function _normailize_dep(dep, projectdir)
+    if path.is_absolute(dep) then
+        dep = path.translate(dep)
+    else
+        dep = path.absolute(dep, projectdir)
+    end
+    if dep:startswith(projectdir) then
+        return path.relative(dep, projectdir)
+    else
+        return deps
+    end
+end
+
+-- parse include file
+function _parse_includefile(line)
+    if line:startswith("#line") then
+        return line:match("#line %d+ \"(.+)\"")
+    elseif line:find("ICON", 1, true) and line:find(".ico", 1, true) then
+        -- 101 ICON "xxx.ico"
+        return line:match("ICON%s+\"(.+.ico)\"")
+    elseif line:find("BITMAP", 1, true) and line:find(".bmp", 1, true) then
+        return line:match("BITMAP%s+\"(.+.bmp)\"")
+    end
+end
+
 -- init it
 function init(self)
-    if winos.version():gt("winxp") then
+    if self:has_flags("-nologo", "mrcflags") then
         -- fix vs2008 on xp, e.g. fatal error RC1106: invalid option: -ologo
         self:set("mrcflags", "-nologo")
     end
@@ -33,7 +60,7 @@ end
 
 -- make the define flag
 function nf_define(self, macro)
-    return "-D" .. macro
+    return {"-D" .. macro}
 end
 
 -- make the undefine flag
@@ -66,7 +93,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
     try
     {
         function ()
-            -- @note we need not uses vstool.iorunv to enable unicode output for rc.exe
+            -- @note we don't need to use vstool.iorunv to enable unicode output for rc.exe
             local program, argv = compargv(self, sourcefile, objectfile, flags)
             local outdata, errdata = os.iorunv(program, argv, {envs = self:runenvs()})
             return (outdata or "") .. (errdata or "")
@@ -95,17 +122,43 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
         }
     }
 
-    -- parse includes
-    local sourcedata = io.readfile(sourcefile)
-    if sourcedata then
-        local depfiles_rc
-        local sourcedir = path.directory(sourcefile)
-        for headerfile in sourcedata:gmatch("#include%s+[\"<](.-)[\">]") do
-            depfiles_rc = (depfiles_rc or "") .. "\n" .. path.join(sourcedir, headerfile)
+    -- try to use cl.exe to parse includes, but cl.exe maybe not exists in masm32 sdk
+    -- @see https://github.com/xmake-io/xmake/issues/2562
+    local cl = self:toolchain():tool("cxx")
+    if cl then
+        local outfile = os.tmpfile() .. ".rc.out"
+        local errfile = os.tmpfile() .. ".rc.err"
+        local includeflags = {}
+        for _, flag in ipairs(flags) do
+            if flag:match("^[-/]I") then
+                table.insert(includeflags, flag)
+            end
         end
-        if dependinfo then
-            dependinfo.depfiles_rc = depfiles_rc
+        local ok = try {function () os.execv(cl, table.join("-E", includeflags, sourcefile), {stdout = outfile, stderr = errfile, envs = self:runenvs()}); return true end}
+        if ok and os.isfile(outfile) then
+            local depfiles_rc
+            local includeset = hashset.new()
+            local file = io.open(outfile)
+            local projectdir = os.projectdir()
+            for line in file:lines() do
+                local includefile = _parse_includefile(line)
+                if includefile then
+                    includefile = _normailize_dep(includefile, projectdir)
+                    if includefile and not includeset:has(includefile)
+                        and path.absolute(includefile) ~= path.absolute(sourcefile)
+                        and os.isfile(includefile) then
+                        depfiles_rc = (depfiles_rc or "") .. "\n" .. includefile
+                        includeset:insert(includefile)
+                    end
+                end
+            end
+            file:close()
+            if dependinfo then
+                dependinfo.depfiles_rc = depfiles_rc
+            end
         end
+        os.tryrm(outfile)
+        os.tryrm(errfile)
     end
 end
 

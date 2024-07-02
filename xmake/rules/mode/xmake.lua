@@ -51,7 +51,7 @@ rule("mode.release")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
@@ -82,7 +82,7 @@ rule("mode.releasedbg")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
@@ -140,7 +140,7 @@ rule("mode.profile")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
@@ -178,12 +178,15 @@ rule("mode.coverage")
             target:add("cxflags", "--coverage")
             target:add("mxflags", "--coverage")
             target:add("ldflags", "--coverage")
+            target:add("shflags", "--coverage")
         end
     end)
 
 -- define rule: asan mode
 rule("mode.asan")
-    on_config(function (target)
+
+    -- we use after_load because c++.build.sanitizer rule/on_config need it
+    after_load(function (target)
 
         -- is asan mode now? xmake f -m asan
         if is_mode("asan") then
@@ -195,7 +198,7 @@ rule("mode.asan")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
@@ -203,16 +206,16 @@ rule("mode.asan")
             end
 
             -- enable asan checker
-            target:add("cxflags", "-fsanitize=address")
-            target:add("mxflags", "-fsanitize=address")
-            target:add("ldflags", "-fsanitize=address")
-            target:add("shflags", "-fsanitize=address")
+            target:set("policy", "build.sanitizer.address", true)
+
+            -- we should use "build.sanitizer.address" instead of it.
+            wprint("deprecated: please use set_policy(\"build.sanitizer.address\", true) instead of \"mode.asan\".")
         end
     end)
 
 -- define rule: tsan mode
 rule("mode.tsan")
-    on_config(function (target)
+    after_load(function (target)
 
         -- is tsan mode now? xmake f -m tsan
         if is_mode("tsan") then
@@ -224,7 +227,7 @@ rule("mode.tsan")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
@@ -232,16 +235,16 @@ rule("mode.tsan")
             end
 
             -- enable tsan checker
-            target:add("cxflags", "-fsanitize=thread")
-            target:add("mxflags", "-fsanitize=thread")
-            target:add("ldflags", "-fsanitize=thread")
-            target:add("shflags", "-fsanitize=thread")
+            target:set("policy", "build.sanitizer.thread", true)
+
+            -- we should use "build.sanitizer.thread" instead of it.
+            wprint("deprecated: please use set_policy(\"build.sanitizer.thread\", true) instead of \"mode.tsan\".")
         end
     end)
 
 -- define rule: msan mode
 rule("mode.msan")
-    on_config(function (target)
+    after_load(function (target)
 
         -- is msan mode now? xmake f -m msan
         if is_mode("msan") then
@@ -253,7 +256,7 @@ rule("mode.msan")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
@@ -261,16 +264,16 @@ rule("mode.msan")
             end
 
             -- enable msan checker
-            target:add("cxflags", "-fsanitize=memory")
-            target:add("mxflags", "-fsanitize=memory")
-            target:add("ldflags", "-fsanitize=memory")
-            target:add("shflags", "-fsanitize=memory")
+            target:set("policy", "build.sanitizer.memory", true)
+
+            -- we should use "build.sanitizer.memory" instead of it.
+            wprint("deprecated: please use set_policy(\"build.sanitizer.memory\", true) instead of \"mode.msan\".")
         end
     end)
 
 -- define rule: lsan mode
 rule("mode.lsan")
-    on_config(function (target)
+    after_load(function (target)
 
         -- is lsan mode now? xmake f -m lsan
         if is_mode("lsan") then
@@ -282,7 +285,7 @@ rule("mode.lsan")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
@@ -290,16 +293,16 @@ rule("mode.lsan")
             end
 
             -- enable lsan checker
-            target:add("cxflags", "-fsanitize=leak")
-            target:add("mxflags", "-fsanitize=leak")
-            target:add("ldflags", "-fsanitize=leak")
-            target:add("shflags", "-fsanitize=leak")
+            target:set("policy", "build.sanitizer.leak", true)
+
+            -- we should use "build.sanitizer.leak" instead of it.
+            wprint("deprecated: please use set_policy(\"build.sanitizer.leak\", true) instead of \"mode.lsan\".")
         end
     end)
 
 -- define rule: ubsan mode
 rule("mode.ubsan")
-    on_config(function (target)
+    after_load(function (target)
 
         -- is ubsan mode now? xmake f -m ubsan
         if is_mode("ubsan") then
@@ -311,18 +314,18 @@ rule("mode.ubsan")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")
                 end
             end
 
-            -- enable tsan checker
-            target:add("cxflags", "-fsanitize=undefined")
-            target:add("mxflags", "-fsanitize=undefined")
-            target:add("ldflags", "-fsanitize=undefined")
-            target:add("shflags", "-fsanitize=undefined")
+            -- enable ubsan checker
+            target:set("policy", "build.sanitizer.undefined", true)
+
+            -- we should use "build.sanitizer.undefined" instead of it.
+            wprint("deprecated: please use set_policy(\"build.sanitizer.undefined\", true) instead of \"mode.ubsan\".")
         end
     end)
 
@@ -340,7 +343,7 @@ rule("mode.valgrind")
 
             -- enable optimization
             if not target:get("optimize") then
-                if is_plat("android", "iphoneos") then
+                if target:is_plat("android", "iphoneos") then
                     target:set("optimize", "smallest")
                 else
                     target:set("optimize", "fastest")

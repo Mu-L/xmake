@@ -18,89 +18,84 @@
 -- @file        xmake.lua
 --
 
--- define language
 language("dlang")
-
-    -- set source file kinds
+    add_rules("dlang")
     set_sourcekinds {dc = ".d"}
-
-    -- set source file flags
     set_sourceflags {dc = "dcflags"}
-
-    -- set target kinds
     set_targetkinds {binary = "dcld", static = "dcar", shared = "dcsh"}
-
-    -- set target flags
     set_targetflags {binary = "ldflags", static = "arflags", shared = "shflags"}
-
-    -- set language kinds
-    set_langkinds {d = "dc"}
-
-    -- set mixing kinds
+    set_langkinds   {d = "dc"}
     set_mixingkinds("dc", "cc", "cxx", "as")
 
-    -- add rules
-    add_rules("dlang")
-
-    -- on load
     on_load("load")
-
-    -- on check_main
     on_check_main("check_main")
 
-    -- set name flags
-    set_nameflags
-    {
-        object =
-        {
+    set_nameflags {
+        object = {
             "config.includedirs"
+        ,   "config.frameworkdirs"
+        ,   "config.frameworks"
         ,   "target.symbols"
         ,   "target.warnings"
         ,   "target.optimize:check"
         ,   "target.vectorexts:check"
         ,   "target.includedirs"
+        ,   "target.frameworkdirs"
+        ,   "target.frameworks"
         ,   "toolchain.includedirs"
         ,   "target.sysincludedirs"
         ,   "toolchain.sysincludedirs"
+        ,   "toolchain.frameworkdirs"
+        ,   "toolchain.frameworks"
         }
-    ,   binary =
-        {
+    ,   binary = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
         ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
         ,   "toolchain.linkdirs"
         ,   "toolchain.rpathdirs"
+        ,   "toolchain.frameworkdirs"
         ,   "config.links"
         ,   "target.links"
+        ,   "target.linkgroups"
         ,   "toolchain.links"
+        ,   "config.frameworks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
         ,   "config.syslinks"
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
-    ,   shared =
-        {
+    ,   shared = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
         ,   "target.strip"
         ,   "target.symbols"
         ,   "toolchain.linkdirs"
+        ,   "toolchain.frameworkdirs"
         ,   "config.links"
         ,   "target.links"
+        ,   "target.linkgroups"
         ,   "toolchain.links"
+        ,   "config.frameworks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
         ,   "config.syslinks"
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
-    ,   static =
-        {
+    ,   static = {
             "target.strip"
         ,   "target.symbols"
         }
     }
 
-    -- set menu
     set_menu {
                 config =
                 {

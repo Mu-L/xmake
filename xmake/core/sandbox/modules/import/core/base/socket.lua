@@ -43,6 +43,10 @@ sandbox_core_base_socket.EV_SEND = socket.EV_SEND
 sandbox_core_base_socket.EV_CONN = socket.EV_CONN
 sandbox_core_base_socket.EV_ACPT = socket.EV_ACPT
 
+-- export the socket control code
+sandbox_core_base_socket.CTRL_SET_RECVBUFF = socket.CTRL_SET_RECVBUFF
+sandbox_core_base_socket.CTRL_SET_SENDBUFF = socket.CTRL_SET_SENDBUFF
+
 -- wrap socket
 function _socket_wrap(sock)
 
@@ -67,6 +71,24 @@ function sandbox_core_base_socket_instance.wait(sock, events, timeout)
         raise(errors)
     end
     return events
+end
+
+-- control socket
+function sandbox_core_base_socket_instance.ctrl(sock, code, value)
+    local ok, errors = sock:_ctrl(code, value)
+    if not ok and errors then
+        raise(errors)
+    end
+    return ok
+end
+
+-- get peer address
+function sandbox_core_base_socket_instance.peeraddr(sock)
+    local result, errors = sock:_peeraddr(data, opt)
+    if not result and errors then
+        raise(errors)
+    end
+    return result
 end
 
 -- bind socket
@@ -124,8 +146,8 @@ function sandbox_core_base_socket_instance.sendfile(sock, file, opt)
 end
 
 -- recv data from socket
-function sandbox_core_base_socket_instance.recv(sock, size, opt)
-    local real, data_or_errors = sock:_recv(size, opt)
+function sandbox_core_base_socket_instance.recv(sock, buff, size, opt)
+    local real, data_or_errors = sock:_recv(buff, size, opt)
     if real < 0 and data_or_errors then
         raise(data_or_errors)
     end
@@ -142,8 +164,8 @@ function sandbox_core_base_socket_instance.sendto(sock, data, addr, port, opt)
 end
 
 -- recv udp data from peer
-function sandbox_core_base_socket_instance.recvfrom(sock, size, opt)
-    local real, data_or_errors, addr, port = sock:_recvfrom(size, opt)
+function sandbox_core_base_socket_instance.recvfrom(sock, buff, size, opt)
+    local real, data_or_errors, addr, port = sock:_recvfrom(buff, size, opt)
     if real < 0 and data_or_errors then
         raise(data_or_errors)
     end

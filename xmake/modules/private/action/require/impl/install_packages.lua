@@ -24,13 +24,15 @@ import("core.base.hashset")
 import("core.base.scheduler")
 import("core.project.project")
 import("core.base.tty")
-import("private.async.runjobs")
-import("private.utils.progress")
-import("actions.install", {alias = "action_install"})
-import("actions.download", {alias = "action_download"})
+import("async.runjobs")
+import("utils.progress")
 import("net.fasturl")
 import("private.action.require.impl.package")
+import("private.action.require.impl.lock_packages")
 import("private.action.require.impl.register_packages")
+import("private.action.require.impl.actions.check", {alias = "action_check"})
+import("private.action.require.impl.actions.install", {alias = "action_install"})
+import("private.action.require.impl.actions.download", {alias = "action_download"})
 
 -- sort packages urls
 function _sort_packages_urls(packages)
@@ -46,53 +48,122 @@ function _sort_packages_urls(packages)
     end
 end
 
--- get package parents string
-function _get_package_parents_str(instance)
-    local parents = instance:parents()
-    if parents then
-        local parentnames = {}
-        for _, parent in pairs(parents) do
-            table.insert(parentnames, parent:displayname())
+-- replace modified package
+function _replace_package(packages, instance, extinstance)
+    for idx, rawinstance in ipairs(packages) do
+        if rawinstance == instance then
+            packages[idx] = extinstance
         end
-        if #parentnames == 0 then
-            return
+        local deps = rawinstance._DEPS
+        for name, dep in pairs(deps) do
+            if dep == instance then
+                deps[name] = nil
+                deps[extinstance:name()] = extinstance
+                break
+            end
         end
-        return table.concat(parentnames, ",")
-    end
-end
-
--- get package configs string
-function _get_package_configs_str(instance)
-    local configs = {}
-    if instance:is_optional() then
-        table.insert(configs, "optional")
-    end
-    local requireinfo = instance:requireinfo()
-    if requireinfo then
-        if requireinfo.plat then
-            table.insert(configs, requireinfo.plat)
+        local parents = rawinstance._PARENTS
+        for name, parent in pairs(parents) do
+            if parent == instance then
+                parents[name] = nil
+                parents[extinstance:name()] = extinstance
+                break
+            end
         end
-        if requireinfo.arch then
-            table.insert(configs, requireinfo.arch)
+        local orderdeps = rawinstance._ORDERDEPS
+        for depidx, dep in ipairs(orderdeps) do
+            if dep == instance then
+                orderdeps[depidx] = extinstance
+                break
+            end
         end
-        for k, v in pairs(requireinfo.configs) do
-            if type(v) == "boolean" then
-                table.insert(configs, k .. ":" .. (v and "y" or "n"))
-            else
-                table.insert(configs, k .. ":" .. v)
+        local librarydeps = rawinstance._LIBRARYDEPS
+        for depidx, dep in ipairs(librarydeps) do
+            if dep == instance then
+                librarydeps[depidx] = extinstance
+                break
+            end
+        end
+        local plaindeps = rawinstance._PLAINDEPS
+        for depidx, dep in ipairs(rawinstance._PLAINDEPS) do
+            if dep == instance then
+                plaindeps[depidx] = extinstance
+                break
             end
         end
     end
-    local parents_str = _get_package_parents_str(instance)
-    if parents_str then
-        table.insert(configs, "from:" .. parents_str)
+end
+
+-- replace modified packages
+function _replace_packages(packages, packages_modified)
+    for _, package_modified in ipairs(packages_modified) do
+        local instance = package_modified.instance
+        local extinstance = package_modified.extinstance
+        _replace_package(packages, instance, extinstance)
     end
-    local configs_str = #configs > 0 and "[" .. table.concat(configs, ", ") .. "]" or ""
-    local limitwidth = os.getwinsize().width * 2 / 3
-    if #configs_str > limitwidth then
-        configs_str = configs_str:sub(1, limitwidth) .. " ..)"
+end
+
+-- get user confirm from 3rd package sources
+-- @see https://github.com/xmake-io/xmake/issues/1140
+function _get_confirm_from_3rd(packages)
+
+    -- get extpackages list
+    local extpackages_list = _g.extpackages_list
+    if not extpackages_list then
+        extpackages_list = {}
+        for _, instance in ipairs(packages) do
+            local extsources = instance:get("extsources")
+            local extsources_extra = instance:extraconf("extsources")
+            if extsources then
+                local extpackages = package.load_packages(extsources, extsources_extra)
+                for _, extinstance in ipairs(extpackages) do
+                    table.insert(extpackages_list, {instance = instance, extinstance = extinstance})
+                end
+            end
+        end
+        _g.extpackages_list = extpackages_list
     end
-    return configs_str
+
+    -- no extpackages?
+    if #extpackages_list == 0 then
+        print("no more packages!")
+        return
+    end
+
+    -- get confirm result
+    local result = utils.confirm({description = function ()
+        cprint("${bright color.warning}note: ${clear}select the following 3rd packages")
+        for idx, extinstance in ipairs(extpackages_list) do
+            local instance = extinstance.instance
+            local extinstance = extinstance.extinstance
+            cprint("  ${yellow}%d.${clear} %s ${yellow}->${clear} %s %s ${dim}%s",
+                idx, extinstance:name(),
+                instance:displayname(),
+                instance:version_str() or "",
+                package.get_configs_str(instance))
+        end
+    end, answer = function ()
+        cprint("please input number list: ${bright}n${clear} (1,2,..)")
+        io.flush()
+        return (io.read() or "n"):trim()
+    end})
+
+    -- get confirmed extpackages
+    local confirmed_extpackages = {}
+    if result and result ~= "n" then
+        for _, idx in ipairs(result:split(',')) do
+            idx = tonumber(idx)
+            if extpackages_list[idx] then
+                table.insert(confirmed_extpackages, extpackages_list[idx])
+            end
+        end
+    end
+
+    -- modify packages
+    if #confirmed_extpackages > 0 then
+        _replace_packages(packages, confirmed_extpackages)
+        return confirmed_extpackages
+    end
 end
 
 -- get user confirm
@@ -103,60 +174,215 @@ function _get_confirm(packages)
         return true
     end
 
-    -- get confirm
-    local confirm = utils.confirm({default = true, description = function ()
+    local result
+    local packages_modified
+    while result == nil do
+        -- get confirm result
+        result = utils.confirm({default = true, description = function ()
 
-        -- get packages for each repositories
-        local packages_repo = {}
-        local packages_group = {}
-        for _, instance in ipairs(packages) do
-            -- achive packages by repository
-            local reponame = instance:repo() and instance:repo():name() or (instance:is_system() and "system" or "")
-            if instance:is_thirdparty() then
-                reponame = instance:name():lower():split("::")[1]
-            end
-            packages_repo[reponame] = packages_repo[reponame] or {}
-            table.insert(packages_repo[reponame], instance)
-
-            -- achive packages by group
-            local group = instance:group()
-            if group then
-                packages_group[group] = packages_group[group] or {}
-                table.insert(packages_group[group], instance)
-            end
-        end
-
-        -- show tips
-        cprint("${bright color.warning}note: ${clear}try installing these packages (pass -y to skip confirm)?")
-        for reponame, packages in pairs(packages_repo) do
-            if reponame ~= "" then
-                print("in %s:", reponame)
-            end
-            local packages_showed = {}
+            -- get packages for each repositories
+            local packages_repo = {}
+            local packages_group = {}
             for _, instance in ipairs(packages) do
-                if not packages_showed[tostring(instance)] then
-                    local group = instance:group()
-                    if group and packages_group[group] and #packages_group[group] > 1 then
-                        for idx, package_in_group in ipairs(packages_group[group]) do
-                            cprint("  ${yellow}%s${clear} %s %s ${dim}%s", idx == 1 and "->" or "   or", package_in_group:displayname(), package_in_group:version_str() or "", _get_package_configs_str(package_in_group))
-                            packages_showed[tostring(package_in_group)] = true
+                -- achive packages by repository
+                local reponame = instance:repo() and instance:repo():name() or (instance:is_system() and "system" or "")
+                if instance:is_thirdparty() then
+                    reponame = instance:name():lower():split("::")[1]
+                end
+                packages_repo[reponame] = packages_repo[reponame] or {}
+                table.insert(packages_repo[reponame], instance)
+
+                -- achive packages by group
+                local group = instance:group()
+                if group then
+                    packages_group[group] = packages_group[group] or {}
+                    table.insert(packages_group[group], instance)
+                end
+            end
+
+            -- show tips
+            cprint("${bright color.warning}note: ${clear}install or modify (m) these packages (pass -y to skip confirm)?")
+            for reponame, packages in pairs(packages_repo) do
+                if reponame ~= "" then
+                    print("in %s:", reponame)
+                end
+                local packages_showed = {}
+                for _, instance in ipairs(packages) do
+                    if not packages_showed[tostring(instance)] then
+                        local group = instance:group()
+                        if group and packages_group[group] and #packages_group[group] > 1 then
+                            for idx, package_in_group in ipairs(packages_group[group]) do
+                                cprint("  ${yellow}%s${clear} %s %s ${dim}%s", idx == 1 and "->" or "   or", package_in_group:displayname(), package_in_group:version_str() or "", package.get_configs_str(package_in_group))
+                                packages_showed[tostring(package_in_group)] = true
+                            end
+                            packages_group[group] = nil
+                        else
+                            cprint("  ${yellow}->${clear} %s %s ${dim}%s", instance:displayname(), instance:version_str() or "", package.get_configs_str(instance))
+                            packages_showed[tostring(instance)] = true
                         end
-                        packages_group[group] = nil
-                    else
-                        cprint("  ${yellow}->${clear} %s %s ${dim}%s", instance:displayname(), instance:version_str() or "", _get_package_configs_str(instance))
-                        packages_showed[tostring(instance)] = true
                     end
                 end
             end
+        end, answer = function ()
+            cprint("please input: ${bright}y${clear} (y/n/m)")
+            io.flush()
+            return (io.read() or "false"):trim()
+        end})
+
+        -- modify to select 3rd packages?
+        if result == "m" then
+            packages_modified = _get_confirm_from_3rd(packages)
+            result = nil
+        else
+            -- get confirm result
+            result = option.boolean(result)
+            if type(result) ~= "boolean" then
+                result = true
+            end
         end
-    end})
-    return confirm
+    end
+    return result, packages_modified
+end
+
+-- show upgraded packages
+function _show_upgraded_packages(packages)
+    local upgraded_count = 0
+    for _, instance in ipairs(packages) do
+        local locked_requireinfo = package.get_locked_requireinfo(instance:requireinfo(), {force = true})
+        if locked_requireinfo and locked_requireinfo.version and instance:version() and instance:version():gt(locked_requireinfo.version) then
+            cprint("  ${color.dump.string}%s${clear}: %s -> ${color.success}%s", instance:displayname(), locked_requireinfo.version, instance:version_str())
+            upgraded_count = upgraded_count + 1
+        end
+    end
+    cprint("${bright}%d packages are upgraded!", upgraded_count)
+end
+
+-- fetch packages
+function _fetch_packages(packages_fetch, installdeps)
+
+    -- init installed packages
+    local packages_fetched = {}
+    for _, instance in ipairs(packages_fetch) do
+        packages_fetched[tostring(instance)] = false
+    end
+
+    -- save terminal mode for stdout, @see https://github.com/xmake-io/xmake/issues/1924
+    local term_mode_stdout = tty.term_mode("stdout")
+
+    -- do fetch
+    local packages_fetching = {}
+    local packages_pending = table.copy(packages_fetch)
+    local working_count = 0
+    local fetching_count = 0
+    local parallelize = true
+    runjobs("fetch_packages", function (index)
+
+        -- fetch a new package
+        local instance = nil
+        while instance == nil and #packages_pending > 0 do
+            for idx, pkg in ipairs(packages_pending) do
+
+                -- all dependencies has been fetched? we fetch it now
+                local ready = true
+                local dep_not_ready = nil
+                for _, dep in pairs(installdeps[tostring(pkg)]) do
+                    local fetched = packages_fetched[tostring(dep)]
+                    if fetched == false then
+                        ready = false
+                        dep_not_ready = dep
+                        break
+                    end
+                end
+
+                -- get a package with the ready status
+                if ready then
+                    instance = pkg
+                    table.remove(packages_pending, idx)
+                    break
+                elseif working_count == 0 then
+                    if #packages_pending == 1 and dep_not_ready then
+                        raise("package(%s): cannot be fetched, there are dependencies(%s) that cannot be fetched!", pkg:displayname(), dep_not_ready:displayname())
+                    elseif #packages_pending == 1 then
+                        raise("package(%s): cannot be fetched!", pkg:displayname())
+                    end
+                end
+            end
+            if instance == nil and #packages_pending > 0 then
+                os.sleep(100)
+            end
+        end
+        if instance then
+
+            -- update working count
+            working_count = working_count + 1
+
+            -- disable parallelize?
+            if not instance:is_parallelize() then
+                parallelize = false
+            end
+            if not parallelize then
+                while fetching_count > 0 do
+                    os.sleep(100)
+                end
+            end
+            fetching_count = fetching_count + 1
+
+            -- fetch this package
+            packages_fetching[index] = instance
+            local oldenvs = os.getenvs()
+            instance:envs_enter()
+            instance:lock()
+            instance:fetch()
+            instance:unlock()
+            os.setenvs(oldenvs)
+
+            -- fix terminal mode to avoid some subprocess to change it
+            --
+            -- @see https://github.com/xmake-io/xmake/issues/1924
+            -- https://github.com/xmake-io/xmake/issues/2329
+            if term_mode_stdout ~= tty.term_mode("stdout") then
+                tty.term_mode("stdout", term_mode_stdout)
+            end
+
+            -- next
+            parallelize = true
+            fetching_count = fetching_count - 1
+            packages_fetching[index] = nil
+            packages_fetched[tostring(instance)] = true
+
+            -- update working count
+            working_count = working_count - 1
+        end
+        packages_fetching[index] = nil
+
+    end, {total = #packages_fetch,
+          comax = (option.get("verbose") or option.get("diagnosis")) and 1 or 4,
+          isolate = true})
+end
+
+-- should fetch package?
+function _should_fetch_package(instance)
+    if instance:is_fetchonly() or not option.get("force") or
+        (option.get("shallow") and not instance:is_toplevel()) then
+        return true
+    end
+end
+
+-- should install package?
+function _should_install_package(instance)
+    _g.package_status_cache = _g.package_status_cache or {}
+    local result = _g.package_status_cache[tostring(instance)]
+    if result == nil then
+        result = package.should_install(instance) or false
+        _g.package_status_cache[tostring(instance)] = result
+    end
+    return result
 end
 
 -- install packages
 function _install_packages(packages_install, packages_download, installdeps)
 
-    -- we need hide wait characters if is not a tty
+    -- we need to hide wait characters if is not a tty
     local show_wait = io.isatty()
 
     -- init installed packages
@@ -164,6 +390,9 @@ function _install_packages(packages_install, packages_download, installdeps)
     for _, instance in ipairs(packages_install) do
         packages_installed[tostring(instance)] = false
     end
+
+    -- save terminal mode for stdout, @see https://github.com/xmake-io/xmake/issues/1924
+    local term_mode_stdout = tty.term_mode("stdout")
 
     -- do install
     local progress_helper = show_wait and progress.new() or nil
@@ -181,12 +410,12 @@ function _install_packages(packages_install, packages_download, installdeps)
         while instance == nil and #packages_pending > 0 do
             for idx, pkg in ipairs(packages_pending) do
 
-                -- all dependences has been installed? we install it now
+                -- all dependencies has been installed? we install it now
                 local ready = true
                 local dep_not_found = nil
                 for _, dep in pairs(installdeps[tostring(pkg)]) do
                     local installed = packages_installed[tostring(dep)]
-                    if installed == false or (installed == nil and not dep:exists()) then
+                    if installed == false or (installed == nil and _should_install_package(dep) and not dep:is_optional()) then
                         ready = false
                         dep_not_found = dep
                         break
@@ -219,7 +448,7 @@ function _install_packages(packages_install, packages_download, installdeps)
                 end
             end
             if instance == nil and #packages_pending > 0 then
-                scheduler.co_yield()
+                os.sleep(100)
             end
         end
         if instance then
@@ -237,7 +466,7 @@ function _install_packages(packages_install, packages_download, installdeps)
                 end
                 if not parallelize then
                     while installing_count > 0 do
-                        scheduler.co_yield()
+                        os.sleep(100)
                     end
                 end
                 installing_count = installing_count + 1
@@ -251,6 +480,7 @@ function _install_packages(packages_install, packages_download, installdeps)
                 local downloaded = true
                 if packages_download[tostring(instance)] then
                     packages_downloading[index] = instance
+                    action_check(instance)
                     downloaded = action_download(instance)
                     packages_downloading[index] = nil
                 end
@@ -258,8 +488,18 @@ function _install_packages(packages_install, packages_download, installdeps)
                 -- install this package
                 packages_installing[index] = instance
                 if downloaded then
-                    action_install(instance)
+                    if not action_install(instance) then
+                        assert(instance:is_precompiled(), "package(%s) should be precompiled", instance:name())
+                        -- we need to disable built and re-download and re-install it
+                        instance:fallback_build()
+                        action_check(instance)
+                        action_download(instance)
+                        action_install(instance)
+                    end
                 end
+
+                -- reset package status cache
+                _g.package_status_cache = nil
 
                 -- register it to local cache if it is root required package
                 --
@@ -287,7 +527,10 @@ function _install_packages(packages_install, packages_download, installdeps)
         packages_installing[index] = nil
         packages_downloading[index] = nil
 
-    end, {total = #packages_install, comax = (option.get("verbose") or option.get("diagnosis")) and 1 or 4, on_timer = function (running_jobs_indices)
+    end, {total = #packages_install,
+          comax = (option.get("verbose") or option.get("diagnosis")) and 1 or 4,
+          isolate = true,
+          on_timer = function (running_jobs_indices)
 
         -- do not print progress info if be verbose
         if option.get("verbose") or not show_wait then
@@ -306,6 +549,11 @@ function _install_packages(packages_install, packages_download, installdeps)
             if instance then
                 table.insert(downloading, instance:displayname())
             end
+        end
+        -- we just return it directly if no thing is waited
+        -- @see https://github.com/xmake-io/xmake/issues/3535
+        if #installing == 0 and #downloading == 0 then
+            return
         end
 
         -- get waitobjs tips
@@ -332,15 +580,21 @@ function _install_packages(packages_install, packages_download, installdeps)
             end
         end
 
+        -- fix terminal mode to avoid some subprocess to change it
+        -- @see https://github.com/xmake-io/xmake/issues/1924
+        if term_mode_stdout ~= tty.term_mode("stdout") then
+            tty.term_mode("stdout", term_mode_stdout)
+        end
+
         -- trace
         progress_helper:clear()
         tty.erase_line_to_start().cr()
         cprintf("${yellow}  => ")
         if #downloading > 0 then
-            cprintf("downloading ${magenta}%s", table.concat(downloading, ", "))
+            cprintf("downloading ${color.dump.string}%s", table.concat(downloading, ", "))
         end
         if #installing > 0 then
-            cprintf("%sinstalling ${magenta}%s", #downloading > 0 and ", " or "", table.concat(installing, ", "))
+            cprintf("%sinstalling ${color.dump.string}%s", #downloading > 0 and ", " or "", table.concat(installing, ", "))
         end
         cprintf(" .. %s", tips and ("${dim}" .. tips .. "${clear} ") or "")
         progress_helper:write()
@@ -387,7 +641,7 @@ function _get_package_installdeps(packages)
     local installdeps = {}
     local packagesmap = {}
     for _, instance in ipairs(packages) do
-        -- we need use alias name first for toolchain/packages
+        -- we need to use alias name first for toolchain/packages
         packagesmap[instance:alias() or instance:name()] = instance
     end
     for _, instance in ipairs(packages) do
@@ -395,7 +649,7 @@ function _get_package_installdeps(packages)
         if instance:orderdeps() then
             deps = table.copy(instance:orderdeps())
         end
-        -- patch toolchain/packages to installdeps, because we need install toolchain package first
+        -- patch toolchain/packages to installdeps, because we need to install toolchain package first
         for _, toolchain in ipairs(instance:toolchains()) do
             for _, packagename in ipairs(toolchain:config("packages")) do
                 if packagesmap[packagename] ~= instance then -- avoid loop recursion
@@ -425,48 +679,89 @@ function main(requires, opt)
     _sort_packages_for_installdeps(packages, installdeps, order_packages)
     packages = table.unique(order_packages)
 
-    -- fetch and register packages (with system) from local first
-    runjobs("fetch_packages", function (index)
-        local instance = packages[index]
-        if instance and (not option.get("force") or (option.get("shallow") and not instance:is_toplevel())) then
-            instance:envs_enter()
-            instance:fetch()
-            instance:envs_leave()
-        end
-    end, {total = #packages})
+    -- save terminal mode for stdout
+    local term_mode_stdout = tty.term_mode("stdout")
 
-    -- register all required root packages to local cache
+    -- fetch and register packages (with system) from local first
+    local packages_fetch = {}
+    for _, instance in ipairs(packages) do
+        if _should_fetch_package(instance) then
+            table.insert(packages_fetch, instance)
+        end
+    end
+    _fetch_packages(packages_fetch, installdeps)
+
+    -- register all installed root packages to local cache
     register_packages(packages)
 
     -- filter packages
     local packages_install = {}
     local packages_download = {}
     local packages_unsupported = {}
+    local packages_not_found = {}
+    local packages_unknown = {}
     for _, instance in ipairs(packages) do
-        if package.should_install(instance) then
+        if _should_install_package(instance) then
             if instance:is_supported() then
                 if #instance:urls() > 0 then
                     packages_download[tostring(instance)] = instance
                 end
                 table.insert(packages_install, instance)
             elseif not instance:is_optional() then
-                table.insert(packages_unsupported, instance)
+                if not instance:exists() and instance:is_system() then
+                    table.insert(packages_unknown, instance)
+                else
+                    table.insert(packages_unsupported, instance)
+                end
+            end
+        -- @see https://github.com/xmake-io/xmake/issues/2050
+        elseif not instance:exists() and not instance:is_optional() then
+            local requireinfo = instance:requireinfo()
+            if requireinfo and requireinfo.system then
+                table.insert(packages_not_found, instance)
             end
         end
     end
 
+    -- exists unknown packages?
+    local has_errors = false
+    if #packages_unknown > 0 then
+        cprint("${bright color.warning}note: ${clear}the following packages were not found in any repository (check if they are spelled correctly):")
+        for _, instance in ipairs(packages_unknown) do
+            print("  -> %s", instance:displayname())
+        end
+        has_errors = true
+    end
+
     -- exists unsupported packages?
     if #packages_unsupported > 0 then
-        -- show tips
-        cprint("${bright color.warning}note: ${clear}the following packages are unsupported for $(plat)/$(arch)!")
+        cprint("${bright color.warning}note: ${clear}the following packages are unsupported on $(plat)/$(arch):")
         for _, instance in ipairs(packages_unsupported) do
             print("  -> %s %s", instance:displayname(), instance:version_str() or "")
         end
+        has_errors = true
+    end
+
+    -- exists not found packages?
+    if #packages_not_found > 0 then
+        if packages_not_found[1]:is_cross() then
+            cprint("${bright color.warning}note: ${clear}system package is not supported for cross-compilation currently, the following system packages cannot be found:")
+        else
+            cprint("${bright color.warning}note: ${clear}the following packages were not found on your system, try again after installing them:")
+        end
+        for _, instance in ipairs(packages_not_found) do
+            print("  -> %s %s", instance:displayname(), instance:version_str() or "")
+        end
+        has_errors = true
+    end
+
+    if has_errors then
         raise()
     end
 
     -- get user confirm
-    if not _get_confirm(packages_install) then
+    local confirm, packages_modified = _get_confirm(packages_install)
+    if not confirm then
         local packages_must = {}
         for _, instance in ipairs(packages_install) do
             if not instance:is_optional() then
@@ -481,6 +776,20 @@ function main(requires, opt)
         end
     end
 
+    -- show upgraded information
+    if option.get("upgrade") then
+        print("upgrading packages ..")
+    end
+
+    -- some packages are modified? we need to fix packages list and all deps
+    if packages_modified then
+        order_packages = {}
+        _replace_packages(packages, packages_modified)
+        installdeps = _get_package_installdeps(packages)
+        _sort_packages_for_installdeps(packages, installdeps, order_packages)
+        packages = table.unique(order_packages)
+     end
+
     -- sort package urls
     _sort_packages_urls(packages_download)
 
@@ -489,6 +798,18 @@ function main(requires, opt)
 
     -- disable other packages in same group
     _disable_other_packages_in_group(packages)
+
+    -- re-register and refresh all root packages to local cache,
+    -- because there may be some missing optional dependencies reinstalled
+    register_packages(packages)
+
+    -- show upgraded packages
+    if option.get("upgrade") then
+        _show_upgraded_packages(packages)
+    end
+
+    -- lock packages
+    lock_packages(packages)
     return packages
 end
 

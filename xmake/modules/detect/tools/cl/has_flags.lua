@@ -19,27 +19,25 @@
 --
 
 -- imports
-import("core.cache.detectcache")
+import("core.language.language")
+import("core.cache.global_detectcache")
+
+-- attempt to check it from known flags
+function _check_from_knownargs(flags, opt)
+    local flag = flags[1]:gsub("/", "-")
+    if flag:startswith("-D") or
+       flag:startswith("-U") or
+       flag:startswith("-I") then
+        return true
+    end
+end
 
 -- attempt to check it from the argument list
 function _check_from_arglist(flags, opt)
-
-    -- only one flag?
-    if #flags > 1 then
-        return
-    end
-
-    -- make cache key
     local key = "detect.tools.cl.has_flags"
-
-    -- make allflags key
     local flagskey = opt.program .. "_" .. (opt.programver or "")
-
-    -- get all allflags from argument list
-    local allflags = detectcache:get2(key, flagskey)
+    local allflags = global_detectcache:get2(key, flagskey)
     if not allflags then
-
-        -- get argument list
         allflags = {}
         local arglist = os.iorunv(opt.program, {"-?"}, {envs = opt.envs})
         if arglist then
@@ -47,29 +45,37 @@ function _check_from_arglist(flags, opt)
                 allflags[arg:gsub("/", "-")] = true
             end
         end
-
-        -- save cache
-        detectcache:set2(key, flagskey, allflags)
-        detectcache:save()
+        global_detectcache:set2(key, flagskey, allflags)
+        global_detectcache:save()
     end
-    return allflags[flags[1]:gsub("/", "-")]
+    local flag = flags[1]:gsub("/", "-")
+    if flag:startswith("-D") or flag:startswith("-I") then
+        return true
+    end
+    return allflags[flag]
+end
+
+-- get extension
+function _get_extension(opt)
+    return opt.flagkind == "cxxflags" and ".cpp" or (table.wrap(language.sourcekinds()[opt.toolkind or "cc"])[1] or ".c")
 end
 
 -- try running to check flags
 function _check_try_running(flags, opt)
 
     -- make an stub source file
-    local tmpdir = path.join(os.tmpdir(), "detect")
-    local sourcefile = path.join(tmpdir, "cl_has_flags.c")
+    local snippet = opt.snippet or "int main(int argc, char** argv)\n{return 0;}"
+    local sourcefile = os.tmpfile("cl_has_flags:" .. snippet) .. _get_extension(opt)
     if not os.isfile(sourcefile) then
-        io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+        io.writefile(sourcefile, snippet)
     end
 
     -- check it
     local errors = nil
     return try  {   function ()
+                        local tmpdir = os.tmpdir()
                         local _, errs = os.iorunv(opt.program, table.join("-c", "-nologo", flags, "-Fo" .. os.nuldev(), sourcefile),
-                                            {envs = opt.envs, curdir = tmpdir}) -- we need switch to tmpdir to avoid generating some tmp files, e.g. /Zi -> vc140.pdb
+                                            {envs = opt.envs, curdir = tmpdir}) -- we need to switch to tmpdir to avoid generating some tmp files, e.g. /Zi -> vc140.pdb
                         if errs and #errs:trim() > 0 then
                             return false, errs
                         end
@@ -88,8 +94,14 @@ end
 function main(flags, opt)
 
     -- attempt to check it from the argument list
-    if _check_from_arglist(flags, opt) then
-        return true
+    opt = opt or {}
+    if not opt.tryrun then
+        if _check_from_arglist(flags, opt) then
+            return true
+        end
+        if _check_from_knownargs(flags, opt) then
+            return true
+        end
     end
 
     -- try running to check it

@@ -1,3 +1,0 @@
-    <ClCompile Include="$(XmakeProjectDir)\#path#">
-      <CompileAs>CompileAsC</CompileAs>
-    </ClCompile>

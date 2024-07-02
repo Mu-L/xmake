@@ -20,7 +20,7 @@
 
 -- imports
 import("core.tool.compiler")
-import("private.utils.progress")
+import("utils.progress")
 
 -- init it
 function init(self)
@@ -30,50 +30,34 @@ end
 
 -- make the strip flag
 function strip(self, level)
-
-    -- the maps
-    local maps =
-    {
+    local maps = {
         debug = "-S"
     ,   all   = "-s"
     }
-
-    -- make it
     return maps[level]
 end
 
 -- make the link arguments list
 function linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
-
-    -- check
-    assert(targetkind == "static")
-
-    -- init arguments
     opt = opt or {}
     local argv = table.join(flags, targetfile, objectfiles)
     if is_host("windows") and not opt.rawargs then
         argv = winos.cmdargv(argv, {escape = true})
     end
-
-    -- make it
     return self:program(), argv
 end
 
 -- link the library file
-function link(self, objectfiles, targetkind, targetfile, flags)
-
-    -- check
-    assert(targetkind == "static", "the target kind: %s is not support for ar", targetkind)
-
-    -- ensure the target directory
+function link(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
     os.mkdir(path.directory(targetfile))
 
     -- @note remove the previous archived file first to force recreating a new file
     os.tryrm(targetfile)
 
     -- link it
-    local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags)
-    os.runv(program, argv, {envs = self:runenvs()})
+    local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
+    os.runv(program, argv, {envs = self:runenvs(), shell = opt.shell})
 end
 
 

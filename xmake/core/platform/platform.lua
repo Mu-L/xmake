@@ -66,7 +66,7 @@ end
 -- set platform architecture
 function _instance:arch_set(arch)
     if self:arch() ~= arch then
-        -- we need clean the dirty cache if architecture has been changed
+        -- we need to clean the dirty cache if architecture has been changed
         platform._PLATFORMS[self:name() .. "_" .. self:arch()] = nil
         platform._PLATFORMS[self:name() .. "_" .. arch] = self
         self._ARCH = arch
@@ -162,7 +162,8 @@ function _instance:toolchains(opt)
             -- get the given toolchain
             local toolchain_given = config.get("toolchain")
             if toolchain_given then
-                local toolchain_inst, errors = toolchain.load(toolchain_given, {plat = self:name(), arch = self:arch()})
+                local toolchain_inst, errors = toolchain.load(toolchain_given, {
+                    plat = self:name(), arch = self:arch()})
                 -- attempt to load toolchain from project
                 if not toolchain_inst and platform._project() then
                     toolchain_inst = platform._project().toolchain(toolchain_given)
@@ -181,7 +182,8 @@ function _instance:toolchains(opt)
         end
         if names then
             for _, name in ipairs(table.wrap(names)) do
-                local toolchain_inst, errors = toolchain.load(name, {plat = self:name(), arch = self:arch()})
+                local toolchain_inst, errors = toolchain.load(name, {
+                    plat = self:name(), arch = self:arch()})
                 -- attempt to load toolchain from project
                 if not toolchain_inst and platform._project() then
                     toolchain_inst = platform._project().toolchain(name)
@@ -234,6 +236,10 @@ end
 
 -- do check
 function _instance:check()
+    local checked = self:_memcache():get("checked")
+    if checked ~= nil then
+        return checked
+    end
 
     -- check toolchains
     local toolchains = self:toolchains({all = true})
@@ -243,7 +249,7 @@ function _instance:check()
     local toolchains_valid = {}
     while idx <= num do
         local toolchain = toolchains[idx]
-        -- we need remove other standalone toolchains if standalone toolchain found
+        -- we need to remove other standalone toolchains if standalone toolchain found
         if (standalone and toolchain:is_standalone()) or not toolchain:check() then
             table.remove(toolchains, idx)
             num = num - 1
@@ -256,11 +262,13 @@ function _instance:check()
         end
     end
     if #toolchains == 0 then
+        self:_memcache():set("checked", false)
         return false, "toolchains not found!"
     end
 
     -- save valid toolchains
     config.set("__toolchains_" .. self:name() .. "_" .. self:arch(), toolchains_valid)
+    self:_memcache():set("checked", true)
     return true
 end
 
@@ -515,7 +523,7 @@ end
 
 -- get the all toolchains
 function platform.toolchains()
-    local toolchains = self._memcache():get("toolchains")
+    local toolchains = platform._memcache():get("toolchains")
     if not toolchains then
         toolchains = {}
         local dirs  = toolchain.directories()
@@ -524,12 +532,12 @@ function platform.toolchains()
             if dirs then
                 for _, dir in ipairs(dirs) do
                     if os.isfile(path.join(dir, "xmake.lua")) then
-                        table.insert(toolchains, path.basename(dir))
+                        table.insert(toolchains, path.filename(dir))
                     end
                 end
             end
         end
-        self._memcache():set("toolchains", toolchains)
+        platform._memcache():set("toolchains", toolchains)
     end
     return toolchains
 end
@@ -544,8 +552,8 @@ function platform.archs(plat, arch)
     return platform.get("archs", plat, arch)
 end
 
--- get the format of the given target kind for platform
-function platform.format(targetkind, plat, arch)
+-- get the format of the given kind for platform
+function platform.format(kind, plat, arch)
 
     -- get platform instance
     local instance, errors = platform.load(plat, arch)
@@ -556,7 +564,7 @@ function platform.format(targetkind, plat, arch)
     -- get formats
     local formats = instance:formats()
     if formats then
-        return formats[targetkind]
+        return formats[kind]
     end
 end
 

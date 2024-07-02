@@ -1,25 +1,10 @@
--- add target
-target("interfaces")
-
-    -- set kind
+target("foo")
     set_kind("static")
+    add_files("src/foo.rs")
 
-    -- add files
-    add_files("src/interfaces.rs")
-
--- add target
 target("${TARGETNAME}_demo")
-
-    -- set kind
     set_kind("binary")
-
-    -- add deps
-    add_deps("interfaces")
-
-    -- add files
+    add_deps("foo")
     add_files("src/main.rs")
-
-    -- add link directory
-    add_linkdirs("$(buildir)")
 
 ${FAQ}

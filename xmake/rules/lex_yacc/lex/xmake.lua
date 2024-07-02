@@ -20,13 +20,13 @@
 
 -- define rule: lex
 rule("lex")
+    add_deps("c++")
+    add_deps("yacc", {order = true})
     set_extensions(".l", ".ll")
-    on_buildcmd_file(function (target, batchcmds, sourcefile_lex, opt)
-
-        -- imports
-        import("lib.detect.find_tool")
+    before_buildcmd_file(function (target, batchcmds, sourcefile_lex, opt)
 
         -- get lex
+        import("lib.detect.find_tool")
         local lex = assert(find_tool("flex") or find_tool("lex"), "lex not found!")
 
         -- get c/c++ source file for lex
@@ -40,7 +40,7 @@ rule("lex")
         -- add commands
         batchcmds:show_progress(opt.progress, "${color.build.object}compiling.lex %s", sourcefile_lex)
         batchcmds:mkdir(path.directory(sourcefile_cx))
-        batchcmds:vrunv(lex.program, {"-o", sourcefile_cx, sourcefile_lex})
+        batchcmds:vrunv(lex.program, {"-o", path(sourcefile_cx), path(sourcefile_lex)})
         batchcmds:compile(sourcefile_cx, objectfile)
 
         -- add deps

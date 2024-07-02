@@ -20,6 +20,7 @@
 
 -- imports
 import("lib.detect.find_tool")
+import("core.cache.global_detectcache")
 
 -- get mobile provision name
 function _get_mobile_provision_name(provision)
@@ -45,18 +46,23 @@ end
 
 -- get codesign identities
 function codesign_identities()
-    local identities = _g.identities
+    local identities = global_detectcache:get2("codesign", "identities")
+    local lastime = global_detectcache:get2("codesign", "lastime")
+    if type(lastime) == "number" and os.time() - lastime > 3 * 24 * 3600 then -- > 3 days
+        identities = nil
+    end
     if identities == nil then
         identities = {}
-        local results = try { function() return os.iorun("/usr/bin/security find-identity -v -p codesigning") end }
-        if not results then
-            results = try { function() return os.iorun("/usr/bin/security find-identity") end }
-            if results then
-                local splitinfo = results:split("Valid identities only", {plain = true})
-                if splitinfo and #splitinfo > 1 then
-                    results = splitinfo[2]
-                end
+        local results = try { function() return os.iorun("/usr/bin/security find-identity") end }
+        if results then
+            local splitinfo = results:split("Valid identities only", {plain = true})
+            if splitinfo and #splitinfo > 1 then
+                results = splitinfo[2]
             end
+        end
+        if not results then
+            -- it may be slower
+            results = try { function() return os.iorun("/usr/bin/security find-identity -v -p codesigning") end }
         end
         if results then
             for _, line in ipairs(results:split('\n', {plain = true})) do
@@ -66,14 +72,20 @@ function codesign_identities()
                 end
             end
         end
-        _g.identities = identities or false
+        global_detectcache:set2("codesign", "identities", identities or false)
+        global_detectcache:set2("codesign", "lastime", os.time())
+        global_detectcache:save()
     end
     return identities or nil
 end
 
 -- get provision profiles only for mobile
 function mobile_provisions()
-    local mobile_provisions = _g.mobile_provisions
+    local mobile_provisions = global_detectcache:get2("codesign", "mobile_provisions")
+    local lastime = global_detectcache:get2("codesign", "lastime")
+    if type(lastime) == "number" and os.time() - lastime > 3 * 24 * 3600 then -- > 3 days
+        mobile_provisions = nil
+    end
     if mobile_provisions == nil then
         mobile_provisions = {}
         local files = os.files("~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision")
@@ -86,7 +98,9 @@ function mobile_provisions()
                 end
             end
         end
-        _g.mobile_provisions = mobile_provisions or false
+        global_detectcache:set2("codesign", "mobile_provisions", mobile_provisions or false)
+        global_detectcache:set2("codesign", "lastime", os.time())
+        global_detectcache:save()
     end
     return mobile_provisions or nil
 end

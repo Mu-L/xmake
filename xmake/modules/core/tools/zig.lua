@@ -36,17 +36,16 @@ end
 
 -- make the strip flag
 function nf_strip(self, level)
-    local maps =
-    {
-        debug       = "--strip"
-    ,   all         = "--strip"
+    local maps = {
+        debug  = "-fstrip"
+    ,   all    = {"-fstrip", "-dead_strip"}
     }
     return maps[level]
 end
 
 -- make the define flag
 function nf_define(self, macro)
-    return "-D" .. macro
+    return {"-D" .. macro}
 end
 
 -- make the optimize flag
@@ -55,7 +54,6 @@ function nf_optimize(self, level)
     {
         none       = "-O Debug"
     ,   fast       = "-O ReleaseSafe"
-    ,   aggressive = "-O ReleaseFast"
     ,   fastest    = "-O ReleaseFast"
     ,   smallest   = "-O ReleaseSmall"
     ,   aggressive = "-O ReleaseFast"
@@ -91,7 +89,7 @@ end
 -- make the rpathdir flag
 function nf_rpathdir(self, dir)
     dir = path.translate(dir)
-    if is_plat("macosx") then
+    if self:is_plat("macosx") then
         return {"-rpath", (dir:gsub("%$ORIGIN", "@loader_path"))}
     else
         return {"-rpath", (dir:gsub("@[%w_]+", function (name)
@@ -117,11 +115,7 @@ end
 
 -- link the target file
 function link(self, objectfiles, targetkind, targetfile, flags)
-
-    -- ensure the target directory
     os.mkdir(path.directory(targetfile))
-
-    -- link it
     os.runv(linkargv(self, objectfiles, targetkind, targetfile, flags))
 end
 
@@ -132,11 +126,7 @@ end
 
 -- compile the source file
 function compile(self, sourcefile, objectfile, dependinfo, flags)
-
-    -- ensure the object directory
     os.mkdir(path.directory(objectfile))
-
-    -- compile it
     os.runv(compargv(self, sourcefile, objectfile, flags))
 end
 

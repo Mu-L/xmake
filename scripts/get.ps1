@@ -11,6 +11,7 @@ param (
 )
 
 & {
+    $LastRelease = "v2.9.3"
     $ErrorActionPreference = 'Stop'
 
     function writeErrorTip($msg) {
@@ -30,14 +31,14 @@ param (
     }
 
     if ($IsLinux -or $IsMacOS) {
-        writeErrorTip 'Install on *nix is not supported, try ' 
-        writeErrorTip '(Use curl) "bash <(curl -fsSL https://raw.githubusercontent.com/xmake-io/xmake/master/scripts/get.sh)"'
-        writeErrorTip 'or' 
-        writeErrorTip '(Use wget) "bash <(wget https://raw.githubusercontent.com/xmake-io/xmake/master/scripts/get.sh -O -)"'
+        writeErrorTip 'Install on *nix is not supported, try '
+        writeErrorTip '(Use curl) "curl -fsSL https://xmake.io/shget.text | bash"'
+        writeErrorTip 'or'
+        writeErrorTip '(Use wget) "wget https://xmake.io/shget.text -O - | bash"'
         throw 'Unsupported platform'
     }
 
-    $temppath = ($env:TMP, $env:TEMP, "$(Get-Location)" -ne $null)[0]
+    $temppath = ([System.IO.Path]::GetTempPath(), $env:TMP, $env:TEMP, "$(Get-Location)" -ne $null)[0]
     [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
 
     if ($null -eq $installdir -or $installdir -match '^\s*$') {
@@ -84,16 +85,16 @@ param (
 
     function xmakeInstall {
         $outfile = Join-Path $temppath "$pid-xmake-installer.exe"
-        $x64arch = @('AMD64', 'IA64', 'ARM64')
+        $x64arch = @('AMD64', 'IA64')
         $arch = if ($env:PROCESSOR_ARCHITECTURE -in $x64arch -or $env:PROCESSOR_ARCHITEW6432 -in $x64arch) { 'x64' } else { 'x86' }
+        $winarch = if ($env:PROCESSOR_ARCHITECTURE -in $x64arch -or $env:PROCESSOR_ARCHITEW6432 -in $x64arch) { 'win64' } else { 'win32' }
+        if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
+            Write-Host "Unsupported host architecture detected: ARM64."
+        }
         $url = if ($v -is [version]) {
-            if ($v -gt "2.2.6") {
-                "https://ci.appveyor.com/api/projects/waruqi/xmake/artifacts/xmake-installer.exe?tag=v$v&pr=false&job=Image%3A+Visual+Studio+2017%3B+Platform%3A+$arch" 
-            } else {
-                "https://github.com/xmake-io/xmake/releases/download/v$v/xmake-v$v.exe"
-            }
+            "https://github.com/xmake-io/xmake/releases/download/v$v/xmake-v$v.$winarch.exe"
         } else {
-            "https://ci.appveyor.com/api/projects/waruqi/xmake/artifacts/xmake-installer.exe?branch=$v&pr=false&job=Image%3A+Visual+Studio+2017%3B+Platform%3A+$arch"
+            "https://github.com/xmake-io/xmake/releases/download/$LastRelease/xmake-$v.$winarch.exe"
         }
         Write-Host "Start downloading $url .."
         try {
@@ -133,58 +134,16 @@ param (
     }
 
     function registerTabCompletion {
-
-        function writeDataToFile($file) {
-            $content = ''
-            if (Test-Path $file -PathType Leaf) {
-                $content = Get-Content $file -Raw
-            }
-
-            try {
-                New-Item $(Split-Path $file -Parent) -ItemType Directory -Force | Out-Null
-                Set-Content $file $content -NoNewline
-            } catch {
-                writeErrorTip "Failed to append to profile!"
-                writeErrorTip "Please try again as administrator"
-                return
-            }
-            
-            if ($content) {
-                $content = [System.Text.RegularExpressions.Regex]::Replace($content, "\n*(# PowerShell parameter completion shim for xmake)?\s*Register-ArgumentCompleter -Native -CommandName xmake -ScriptBlock\s*{.+?\n}\s*", "`n", [System.Text.RegularExpressions.RegexOptions]::Singleline) 
-            }
-            try {
-                $appendcontent = (Invoke-Webrequest 'https://xmake.io/assets/scripts/pscompletions.text' -UseBasicParsing).Content
-            } catch {
-                writeErrorTip 'Download failed!'
-                writeErrorTip 'Check your network or... the news of S3 break'
-                return
-            }
-            Set-Content $file "$content`n$appendcontent" -NoNewline
-            . $file
-            Write-Host "Tab completion installed"
+        # TODO: add --global --user choice
+        Write-Host "Tab completion service"
+        try {
+            xmake update --integrate
+        } catch {
+            writeErrorTip "Failed to register tab completion!"
+            writeErrorTip 'Please try "xmake update --integrate" to register manually.'
+            return
         }
-        $message = 'Tab completion service'
-        $question = 'Would you like to install tab completion service of xmake to your profile?'
-
-        $choices = @(
-            (New-Object Management.Automation.Host.ChoiceDescription -ArgumentList @(
-                    'For &all users',
-                    "Install for all users, writes to $($PROFILE.AllUsersAllHosts), admin privilege is needed.")),
-            (New-Object Management.Automation.Host.ChoiceDescription -ArgumentList @(
-                    'Just for &me',
-                    "Install for current user, writes to $($PROFILE.CurrentUserAllHosts).")),
-            (New-Object Management.Automation.Host.ChoiceDescription -ArgumentList @(
-                    'Just for this &host',
-                    "Install for current user current host, writes to $($PROFILE.CurrentUserCurrentHost).")),
-            (New-Object Management.Automation.Host.ChoiceDescription -ArgumentList @(
-                    '&No',
-                    "Do not install xmake's tab completion service."))
-        )
-        switch ($Host.UI.PromptForChoice($message, $question, $choices, 1)) {
-            0 { writeDataToFile($PROFILE.AllUsersAllHosts) }
-            1 { writeDataToFile($PROFILE.CurrentUserAllHosts) }
-            2 { writeDataToFile($PROFILE.CurrentUserCurrentHost) }
-        }
+        Write-Host "Tab completion installed"
     }
 
     checkTempAccess

@@ -39,12 +39,9 @@ sandbox_utils.confirm = utils.confirm
 sandbox_utils.error   = utils.error
 sandbox_utils.warning = utils.warning
 sandbox_utils.trycall = utils.trycall
-sandbox_utils.ifelse  = utils.ifelse
 
 -- print each arguments
 function sandbox_utils._print(...)
-
-    -- format each arguments
     local args = {}
     for _, arg in ipairs({...}) do
         if type(arg) == "string" then
@@ -53,12 +50,8 @@ function sandbox_utils._print(...)
             table.insert(args, arg)
         end
     end
-
-    -- print multi-variables with raw lua action
-    utils._print(unpack(args))
-
-    -- write to the log file
-    log:printv(unpack(args))
+    utils._print(table.unpack(args))
+    log:printv(table.unpack(args))
 end
 
 -- print format string with newline
@@ -66,61 +59,36 @@ end
 -- print multi-variables with raw lua action
 --
 function sandbox_utils.print(format, ...)
-
-    -- print format string
     if type(format) == "string" and format:find("%", 1, true) then
-
         local args = {...}
-        try
-        {
+        try {
             function ()
-                -- attempt to format message
-                local message = vformat(format, unpack(args))
-
-                -- trace
+                local message = vformat(format, table.unpack(args))
                 utils._print(message)
-
-                -- write to the log file
                 log:printv(message)
             end,
-            catch
-            {
+            catch {
                 function (errors)
-                    -- print multi-variables with raw lua action
-                    sandbox_utils._print(format, unpack(args))
+                    sandbox_utils._print(format, table.unpack(args))
                 end
             }
         }
-
     else
-        -- print multi-variables with raw lua action
         sandbox_utils._print(format, ...)
     end
 end
 
 -- print format string and the builtin variables without newline
 function sandbox_utils.printf(format, ...)
-
-    -- init message
     local message = vformat(format, ...)
-
-    -- trace
     utils._iowrite(message)
-
-    -- write log to the log file
     log:write(message)
 end
 
 -- print format string, the builtin variables and colors with newline
 function sandbox_utils.cprint(format, ...)
-
-    -- init message
     local message = vformat(format, ...)
-
-    -- trace
     utils._print(colors.translate(message))
-
-    -- write log to the log file
     if log:file() then
         log:printv(colors.ignore(message))
     end
@@ -128,14 +96,8 @@ end
 
 -- print format string, the builtin variables and colors without newline
 function sandbox_utils.cprintf(format, ...)
-
-    -- init message
     local message = vformat(format, ...)
-
-    -- trace
     utils._iowrite(colors.translate(message))
-
-    -- write log to the log file
     if log:file() then
         log:write(colors.ignore(message))
     end

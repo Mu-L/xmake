@@ -28,6 +28,7 @@ local utils     = require("base/utils")
 local table     = require("base/table")
 local string    = require("base/string")
 local option    = require("base/option")
+local profiler  = require("base/profiler")
 local tool      = require("tool/tool")
 local builder   = require("tool/builder")
 local config    = require("project/config")
@@ -74,6 +75,22 @@ function compiler:_add_flags_from_compiler(flags, targetkind)
     end
 end
 
+-- add flags from the sourcefile config
+function compiler:_add_flags_from_fileconfig(flags, target, sourcefile, fileconfig)
+
+    -- add flags from the current compiler
+    local add_sourceflags = self:_tool().add_sourceflags
+    if add_sourceflags then
+        local flag = add_sourceflags(self:_tool(), sourcefile, fileconfig, target, self:_targetkind())
+        if flag and flag ~= "" then
+            table.join2(flags, flag)
+        end
+    end
+
+    -- add flags from the common argument option
+    self:_add_flags_from_argument(flags, target, fileconfig)
+end
+
 -- load compiler tool
 function compiler._load_tool(sourcekind, target)
 
@@ -88,13 +105,14 @@ function compiler._load_tool(sourcekind, target)
     if not result then
         return nil, errors
     end
-
-    -- done
     return result, program
 end
 
 -- load the compiler from the given source kind
 function compiler.load(sourcekind, target)
+    if not sourcekind then
+        return nil, "unknown source kind!"
+    end
 
     -- load compiler tool first (with cache)
     local compiler_tool, program_or_errors = compiler._load_tool(sourcekind, target)
@@ -103,49 +121,69 @@ function compiler.load(sourcekind, target)
     end
 
     -- init cache key
-    local cachekey = sourcekind .. (program_or_errors or "") .. (config.get("arch") or os.arch())
+    -- @note we need plat/arch,
+    -- because it is possible for the compiler to do cross-compilation with the -target parameter
+    local plat = compiler_tool:plat() or config.plat() or os.host()
+    local arch = compiler_tool:arch() or config.arch() or os.arch()
+    local cachekey = sourcekind .. (program_or_errors or "") .. plat .. arch
 
     -- get it directly from cache dirst
     compiler._INSTANCES = compiler._INSTANCES or {}
-    if compiler._INSTANCES[cachekey] then
-        return compiler._INSTANCES[cachekey]
+    local instance = compiler._INSTANCES[cachekey]
+    if not instance then
+
+        -- new instance
+        instance = table.inherit(compiler, builder)
+
+        -- save the compiler tool
+        instance._TOOL = compiler_tool
+
+        -- load the compiler language from the source kind
+        local result, errors = language.load_sk(sourcekind)
+        if not result then
+            return nil, errors
+        end
+        instance._LANGUAGE = result
+
+        -- init target (optional)
+        instance._TARGET = target
+
+        -- init target kind
+        instance._TARGETKIND = "object"
+
+        -- init name flags
+        instance._NAMEFLAGS = result:nameflags()[instance:_targetkind()]
+
+        -- init flag kinds
+        instance._FLAGKINDS = table.wrap(result:sourceflags()[sourcekind])
+
+        -- add toolchains flags to the compiler tool, e.g. gcc.cxflags or cxflags
+        local toolname = compiler_tool:name()
+        if target and target.toolconfig then
+            for _, flagkind in ipairs(instance:_flagkinds()) do
+                compiler_tool:add(flagkind, target:toolconfig(toolname .. '.' .. flagkind) or target:toolconfig(flagkind))
+            end
+        else
+            for _, flagkind in ipairs(instance:_flagkinds()) do
+                compiler_tool:add(flagkind, platform.toolconfig(toolname .. '.' .. flagkind) or platform.toolconfig(flagkind))
+            end
+        end
+
+        -- @note we can't call _load_once before caching the instance,
+        -- it may call has_flags to trigger the concurrent scheduling.
+        --
+        -- this will result in more compiler/linker instances being created at the same time,
+        -- and they will access the same tool instance at the same time.
+        --
+        -- @see https://github.com/xmake-io/xmake/issues/3429
+        compiler._INSTANCES[cachekey] = instance
     end
 
-    -- new instance
-    local instance = table.inherit(compiler, builder)
-
-    -- save the compiler tool
-    instance._TOOL = compiler_tool
-
-    -- load the compiler language from the source kind
-    local result, errors = language.load_sk(sourcekind)
-    if not result then
+    -- we need to load it at the end because in tool.load().
+    -- because we may need to call has_flags, which requires the full platform toolchain flags
+    local ok, errors = compiler_tool:_load_once()
+    if not ok then
         return nil, errors
-    end
-    instance._LANGUAGE = result
-
-    -- init target kind
-    instance._TARGETKIND = "object"
-
-    -- init name flags
-    instance._NAMEFLAGS = result:nameflags()[instance:_targetkind()]
-
-    -- init flag kinds
-    instance._FLAGKINDS = table.wrap(result:sourceflags()[sourcekind])
-
-    -- save this instance
-    compiler._INSTANCES[cachekey] = instance
-
-    -- add toolchains flags to the compiler tool, e.g. gcc.cxflags or cxflags
-    local toolname = compiler_tool:name()
-    if target and target.toolconfig then
-        for _, flagkind in ipairs(instance:_flagkinds()) do
-            compiler_tool:add(flagkind, target:toolconfig(toolname .. '.' .. flagkind) or target:toolconfig(flagkind))
-        end
-    else
-        for _, flagkind in ipairs(instance:_flagkinds()) do
-            compiler_tool:add(flagkind, platform.toolconfig(toolname .. '.' .. flagkind) or platform.toolconfig(flagkind))
-        end
     end
     return instance
 end
@@ -222,10 +260,8 @@ end
 -- compile the source files
 function compiler:compile(sourcefiles, objectfile, opt)
 
-    -- init options
-    opt = opt or {}
-
     -- get compile flags
+    opt = opt or {}
     local compflags = opt.compflags
     if not compflags then
         -- patch sourcefile to get flags of the given source file
@@ -236,7 +272,12 @@ function compiler:compile(sourcefiles, objectfile, opt)
     end
 
     -- compile it
-    return sandbox.load(self:_tool().compile, self:_tool(), sourcefiles, objectfile, opt.dependinfo, compflags, opt)
+    opt = table.copy(opt)
+    opt.target = self:target()
+    profiler:enter(self:name(), "compile", sourcefiles)
+    local ok, errors = sandbox.load(self:_tool().compile, self:_tool(), sourcefiles, objectfile, opt.dependinfo, compflags, opt)
+    profiler:leave(self:name(), "compile", sourcefiles)
+    return ok, errors
 end
 
 -- get the compile arguments list
@@ -262,29 +303,13 @@ function compiler:compcmd(sourcefiles, objectfile, opt)
     return os.args(table.join(self:compargv(sourcefiles, objectfile, opt)))
 end
 
--- add flags from the sourcefile config
-function builder:_add_flags_from_fileconfig(flags, target, sourcefile, fileconfig)
-
-    -- add flags from the current compiler
-    local add_sourceflags = self:_tool().add_sourceflags
-    if add_sourceflags then
-        local flag = add_sourceflags(self:_tool(), sourcefile, fileconfig, target, self:_targetkind())
-        if flag and flag ~= "" then
-            table.join2(flags, flag)
-        end
-    end
-
-    -- add flags from the common argument option
-    self:_add_flags_from_argument(flags, target, fileconfig)
-end
-
 -- get the compling flags
 --
 -- @param opt   the argument options (contain all the compiler attributes of target),
 --              e.g.
 --              {target = ..., targetkind = "static", configs = {defines = "", cxflags = "", includedirs = ""}}
 --
--- @return      flags string, flags list
+-- @return      flags list
 --
 function compiler:compflags(opt)
 

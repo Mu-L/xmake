@@ -18,23 +18,14 @@
 -- @file        xmake.lua
 --
 
--- define toolchain
 toolchain("mingw")
-
-    -- set homepage
+    set_kind("standalone")
     set_homepage("http://www.mingw.org/")
     set_description("Minimalist GNU for Windows")
+    set_runtimes("stdc++_static", "stdc++_shared")
 
-    -- mark as standalone toolchain
-    set_kind("standalone")
-
-    -- check toolchain
     on_check("check")
-
-    -- on load
     on_load(function (toolchain)
-
-        -- imports
         import("core.project.config")
 
         -- get cross
@@ -61,9 +52,9 @@ toolchain("mingw")
         if is_host("windows") and bindir then
             -- @note we uses bin/ar.exe instead of bin/cross-gcc-ar.exe, @see https://github.com/xmake-io/xmake/issues/807#issuecomment-635779210
             toolchain:add("toolset", "ar", path.join(bindir, "ar"))
-            toolchain:add("toolset", "ex", path.join(bindir, "ar"))
             toolchain:add("toolset", "strip", path.join(bindir, "strip"))
             toolchain:add("toolset", "ranlib", path.join(bindir, "ranlib"))
+            toolchain:add("toolset", "objcopy", path.join(bindir, "objcopy"))
         end
         toolchain:add("toolset", "cc", cross .. "gcc")
         toolchain:add("toolset", "cxx", cross .. "g++", cross .. "gcc")
@@ -72,9 +63,9 @@ toolchain("mingw")
         toolchain:add("toolset", "ld", cross .. "g++", cross .. "gcc")
         toolchain:add("toolset", "sh", cross .. "g++", cross .. "gcc")
         toolchain:add("toolset", "ar", cross .. "ar")
-        toolchain:add("toolset", "ex", cross .. "ar")
         toolchain:add("toolset", "strip", cross .. "strip")
         toolchain:add("toolset", "ranlib", cross .. "ranlib")
+        toolchain:add("toolset", "objcopy", cross .. "objcopy")
         toolchain:add("toolset", "mrc", cross .. "windres")
         if is_host("windows") and bindir then
             -- we use bin/gcc.exe if cross not found

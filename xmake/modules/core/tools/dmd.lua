@@ -22,6 +22,7 @@
 import("core.base.option")
 import("core.project.config")
 import("core.project.project")
+import("core.language.language")
 
 -- init it
 function init(self)
@@ -30,64 +31,81 @@ function init(self)
     self:set("dcarflags", "-lib")
 
     -- init shflags
-    self:set("dcshflags", "-shared", "-fPIC")
+    self:set("dcshflags", "-shared")
 
-    -- init dcflags for the kind: shared
-    self:set("shared.dcflags", "-fPIC")
+    -- add -fPIC for shared
+    if not self:is_plat("windows", "mingw") then
+        self:add("dcshflags", "-fPIC")
+        self:add("shared.dcflags", "-fPIC")
+    end
 end
 
 -- make the optimize flag
 function nf_optimize(self, level)
-    local maps =
-    {
-        fast        = "-O"
-    ,   faster      = "-O -release"
-    ,   fastest     = "-O -release -inline -boundscheck=off"
-    ,   smallest    = "-O -release -boundscheck=off"
-    ,   aggressive  = "-O -release -inline -boundscheck=off"
-    }
-    return maps[level]
+    -- only for source kind
+    local kind = self:kind()
+    if language.sourcekinds()[kind] then
+        local maps =
+        {
+            fast        = "-O"
+        ,   faster      = {"-O", "-release"}
+        ,   fastest     = {"-O", "-release", "-inline", "-boundscheck=off"}
+        ,   smallest    = {"-O", "-release", "-boundscheck=off"}
+        ,   aggressive  = {"-O", "-release", "-inline", "-boundscheck=off"}
+        }
+        return maps[level]
+    end
 end
 
 -- make the strip flag
 function nf_strip(self, level)
-    local maps =
-    {
-        debug       = "-L-S"
-    ,   all         = "-L-s"
-    }
-    return maps[level]
+    if not self:is_plat("windows") then
+        local maps = {
+            debug = "-L-S",
+            all   = "-L-s"
+        }
+        if self:is_plat("macosx", "iphoneos") then
+            maps.all = {"-L-x", "-L-dead_strip"}
+        end
+        return maps[level]
+    end
 end
 
 -- make the symbol flag
 function nf_symbol(self, level)
-    local maps =
-    {
-        debug = "-g -debug"
-    }
-    return maps[level]
+    local kind = self:kind()
+    if language.sourcekinds()[kind] then
+        local maps = _g.symbol_maps
+        if not maps then
+            maps = {
+                debug  = {"-g", "-debug"}
+            }
+            _g.symbol_maps = maps
+        end
+        return maps[level .. '_' .. kind] or maps[level]
+    elseif (kind == "dcld" or kind == "dcsh") and self:is_plat("windows") and level == "debug" then
+        return "-g"
+    end
 end
 
 -- make the warning flag
 function nf_warning(self, level)
-    local maps =
-    {
-        none        = "-d"
-    ,   less        = "-w"
-    ,   more        = "-w -wi"
-    ,   all         = "-w -wi"
-    ,   everything  = "-w -wi"
-    ,   error       = "-de"
+    local maps = {
+        none        = "-d",
+        less        = "-w",
+        more        = "-w -wi",
+        all         = "-w -wi",
+        everything  = "-w -wi",
+        error       = "-de"
     }
     return maps[level]
 end
 
 -- make the vector extension flag
 function nf_vectorext(self, extension)
-    local maps =
-    {
-        avx         = "-mcpu=avx"
-    ,   avx2        = "-mcpu=avx"
+    local maps = {
+        avx  = "-mcpu=avx",
+        avx2 = "-mcpu=avx"
     }
     return maps[extension]
 end
@@ -104,7 +122,11 @@ end
 
 -- make the link flag
 function nf_link(self, lib)
-    return "-L-l" .. lib
+    if self:is_plat("windows") then
+        return "-L" .. lib .. ".lib"
+    else
+        return "-L-l" .. lib
+    end
 end
 
 -- make the syslink flag
@@ -114,43 +136,64 @@ end
 
 -- make the linkdir flag
 function nf_linkdir(self, dir)
-    return {"-L-L" .. dir}
+    if self:is_plat("windows") then
+        return {"-L-libpath:" .. dir}
+    else
+        return {"-L-L" .. dir}
+    end
+end
+
+-- make the framework flag
+function nf_framework(self, framework)
+    if self:is_plat("macosx") then
+        return {"-L-framework", "-L" .. framework}
+    end
+end
+
+-- make the frameworkdir flag
+function nf_frameworkdir(self, frameworkdir)
+    if self:is_plat("macosx") then
+        return {"-L-F" .. path.translate(frameworkdir)}
+    end
 end
 
 -- make the rpathdir flag
 function nf_rpathdir(self, dir)
-    dir = path.translate(dir)
-    if self:has_flags("-L-rpath=" .. dir, "ldflags") then
-        return {"-L-rpath=" .. (dir:gsub("@[%w_]+", function (name)
-            local maps = {["@loader_path"] = "$ORIGIN", ["@executable_path"] = "$ORIGIN"}
-            return maps[name]
-        end))}
-    elseif self:has_flags("-L-rpath -L" .. dir, "ldflags") then
-        return {"-L-rpath", "-L" .. (dir:gsub("%$ORIGIN", "@loader_path"))}
+    if not self:is_plat("windows") then
+        dir = path.translate(dir)
+        if self:has_flags("-L-rpath=" .. dir, "ldflags") then
+            return {"-L-rpath=" .. (dir:gsub("@[%w_]+", function (name)
+                local maps = {["@loader_path"] = "$ORIGIN", ["@executable_path"] = "$ORIGIN"}
+                return maps[name]
+            end))}
+        elseif self:has_flags("-L-rpath -L" .. dir, "ldflags") then
+            return {"-L-rpath", "-L" .. (dir:gsub("%$ORIGIN", "@loader_path"))}
+        end
     end
 end
 
 -- make the link arguments list
-function linkargv(self, objectfiles, targetkind, targetfile, flags)
+function linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
 
     -- add rpath for dylib (macho), e.g. -install_name @rpath/file.dylib
     local flags_extra = {}
-    if targetkind == "shared" and is_plat("macosx") then
+    if targetkind == "shared" and self:is_plat("macosx") then
         table.insert(flags_extra, "-L-install_name")
         table.insert(flags_extra, "-L@rpath/" .. path.filename(targetfile))
     end
 
     -- init arguments
-    return self:program(), table.join(flags, flags_extra, "-of" .. targetfile, objectfiles)
+    local argv = table.join(flags, flags_extra, "-of" .. targetfile, objectfiles)
+    if is_host("windows") and not opt.rawargs then
+        argv = winos.cmdargv(argv, {escape = true})
+    end
+    return self:program(), argv
 end
 
 -- link the target file
 function link(self, objectfiles, targetkind, targetfile, flags)
-
-    -- ensure the target directory
     os.mkdir(path.directory(targetfile))
-
-    -- link it
     os.runv(linkargv(self, objectfiles, targetkind, targetfile, flags))
 end
 
@@ -160,12 +203,77 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
     os.mkdir(path.directory(objectfile))
 
     -- compile it
-    os.runv(compargv(self, sourcefile, objectfile, flags))
-end
+    opt = opt or {}
+    local depfile = dependinfo and os.tmpfile() or nil
+    try
+    {
+        function ()
 
+            -- generate includes file
+            local compflags = flags
+            if depfile then
+                compflags = table.join(compflags, "-makedeps=" .. depfile)
+            end
+
+            -- do compile
+            local program, argv = compargv(self, sourcefile, objectfile, compflags)
+            os.iorunv(program, argv, {envs = self:runenvs()})
+        end,
+        catch
+        {
+            function (errors)
+
+                -- try removing the old object file for forcing to rebuild this source file
+                os.tryrm(objectfile)
+
+                -- parse and strip errors
+                local lines = errors and tostring(errors):split('\n', {plain = true}) or {}
+                if not option.get("verbose") then
+
+                    -- find the start line of error
+                    local start = 0
+                    for index, line in ipairs(lines) do
+                        if line:find("Error:", 1, true) or line:find("错误：", 1, true) then
+                            start = index
+                            break
+                        end
+                    end
+
+                    -- get 16 lines of errors
+                    if start > 0 then
+                        lines = table.slice(lines, start, start + ((#lines - start > 16) and 16 or (#lines - start)))
+                    end
+                end
+
+                -- raise compiling errors
+                local results = #lines > 0 and table.concat(lines, "\n") or ""
+                if not option.get("verbose") then
+                    results = results .. "\n  ${yellow}> in ${bright}" .. sourcefile
+                end
+                raise(results)
+            end
+        },
+        finally
+        {
+            function (ok, outdata, errdata)
+
+                -- generate the dependent includes
+                if depfile and os.isfile(depfile) then
+                    if dependinfo then
+                        -- it use makefile/gcc compatiable format
+                        dependinfo.depfiles_gcc = io.readfile(depfile, {continuation = "\\"})
+                    end
+
+                    -- remove the temporary dependent file
+                    os.tryrm(depfile)
+                end
+            end
+        }
+    }
+end

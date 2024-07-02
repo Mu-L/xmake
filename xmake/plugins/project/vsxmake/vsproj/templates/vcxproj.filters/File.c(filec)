@@ -1,3 +1,0 @@
-    <ClCompile Include="$(XmakeProjectDir)\#path#">
-      <Filter>#dir#</Filter>
-    </ClCompile>

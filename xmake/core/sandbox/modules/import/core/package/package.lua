@@ -26,57 +26,39 @@ local project    = require("project/project")
 local package    = require("package/package")
 local raise      = require("sandbox/modules/raise")
 
--- get cache directory
-function sandbox_core_package_package.cachedir()
-    return package.cachedir()
-end
-
--- the install directory
-function sandbox_core_package_package.installdir()
-    return package.installdir()
-end
-
--- the search directories
-function sandbox_core_package_package.searchdirs()
-    return package.searchdirs()
-end
+-- inherit some builtin interfaces
+sandbox_core_package_package.cachedir   = package.cachedir
+sandbox_core_package_package.installdir = package.installdir
+sandbox_core_package_package.searchdirs = package.searchdirs
+sandbox_core_package_package.targetplat = package.targetplat
+sandbox_core_package_package.targetarch = package.targetarch
+sandbox_core_package_package.apis       = package.apis
+sandbox_core_package_package.new        = package.new
 
 -- load the package from the project file
 function sandbox_core_package_package.load_from_project(packagename)
-
-    -- load package instance
     local instance, errors = package.load_from_project(packagename, project)
     if errors then
         raise(errors)
     end
-
-    -- ok
     return instance
 end
 
 -- load the package from the system
 function sandbox_core_package_package.load_from_system(packagename)
-
-    -- load package instance
     local instance, errors = package.load_from_system(packagename)
     if errors then
         raise(errors)
     end
-
-    -- ok
     return instance
 end
 
 -- load the package from repositories
-function sandbox_core_package_package.load_from_repository(packagename, repo, packagedir, packagefile)
-
-    -- load package instance
-    local instance, errors = package.load_from_repository(packagename, repo, packagedir, packagefile)
+function sandbox_core_package_package.load_from_repository(packagename, packagedir, opt)
+    local instance, errors = package.load_from_repository(packagename, packagedir, opt)
     if not instance then
         raise(errors)
     end
-
-    -- ok
     return instance
 end
 

@@ -23,22 +23,59 @@ import("core.base.option")
 import("core.project.config")
 import("core.tool.linker")
 import("core.tool.compiler")
+import("core.tool.toolchain")
+import("core.cache.memcache")
+import("lib.detect.find_tool")
 
--- translate path
-function _translate_path(package, p)
-    if p and is_host("windows") and package:is_plat("mingw") then
-        p = p:gsub("\\", "/")
+-- translate paths
+function _translate_paths(paths)
+    if paths and is_host("windows") then
+        if type(paths) == "string" then
+            return path.unix(paths)
+        elseif type(paths) == "table" then
+            local result = {}
+            for _, p in ipairs(paths) do
+                table.insert(result, path.unix(p))
+            end
+            return result
+        end
     end
-    return p
+    return paths
+end
+
+-- translate cygwin paths
+function _translate_cygwin_paths(paths)
+    if type(paths) == "string" then
+        return path.cygwin(paths)
+    elseif type(paths) == "table" then
+        local result = {}
+        for _, p in ipairs(paths) do
+            table.insert(result, path.cygwin(p))
+        end
+        return result
+    end
+    return paths
 end
 
 -- translate windows bin path
 function _translate_windows_bin_path(bin_path)
     if bin_path then
         local argv = os.argv(bin_path)
-        argv[1] = argv[1]:gsub("\\", "/") .. ".exe"
+        argv[1] = path.unix(argv[1]) .. ".exe"
         return os.args(argv)
     end
+end
+
+-- get msvc
+function _get_msvc(package)
+    local msvc = package:toolchain("msvc")
+    assert(msvc:check(), "vs not found!") -- we need to check vs envs if it has been not checked yet
+    return msvc
+end
+
+-- get msvc run environments
+function _get_msvc_runenvs(package)
+    return os.joinenvs(_get_msvc(package):runenvs())
 end
 
 -- map compiler flags
@@ -51,16 +88,46 @@ function _map_linkflags(package, targetkind, sourcekinds, name, values)
     return linker.map_flags(targetkind, sourcekinds, name, values, {target = package})
 end
 
+-- is cross compilation?
+function _is_cross_compilation(package)
+    if not package:is_plat(os.subhost()) then
+        return true
+    end
+    if package:is_plat("macosx") and not package:is_arch(os.subarch()) then
+        return true
+    end
+    return false
+end
+
+-- get memcache
+function _memcache()
+    return memcache.cache("package.tools.autoconf")
+end
+
+-- has `--with-pic`?
+function _has_with_pic(package)
+    local has_with_pic = _memcache():get2(tostring(package), "with_pic")
+    if has_with_pic == nil then
+        local result = try {function() return os.iorunv("./configure", {"--help"}, {shell = true}) end}
+        if result and result:find("--with-pic", 1, true) then
+            has_with_pic = true
+        end
+        has_with_pic = has_with_pic or false
+        _memcache():set2(tostring(package), "with_pic", has_with_pic)
+    end
+    return has_with_pic
+end
+
 -- get configs
 function _get_configs(package, configs)
 
     -- add prefix
     local configs = configs or {}
-    table.insert(configs, "--prefix=" .. _translate_path(package, package:installdir()))
+    table.insert(configs, "--prefix=" .. _translate_paths(package:installdir()))
 
     -- add host for cross-complation
-    if not configs.host and not package:is_plat(os.subhost()) then
-        if package:is_plat("iphoneos") then
+    if not configs.host and _is_cross_compilation(package) then
+        if package:is_plat("iphoneos", "macosx") then
             local triples =
             {
                 arm64  = "aarch64-apple-darwin",
@@ -94,7 +161,7 @@ function _get_configs(package, configs)
                 x86_64 = "x86_64-w64-mingw32"
             }
             table.insert(configs, "--host=" .. (triples[package:arch()] or triples.i386))
-        elseif package:is_plat("cross") then
+        elseif package:is_plat("cross") and package:targetos() then
             local host = package:arch()
             if package:is_arch("arm64") then
                 host = "aarch64"
@@ -105,40 +172,90 @@ function _get_configs(package, configs)
             table.insert(configs, "--host=" .. host)
         end
     end
+    if package:is_plat("linux", "bsd") and
+        package:config("pic") ~= false and _has_with_pic(package) then
+        table.insert(configs, "--with-pic")
+    end
     return configs
+end
+
+-- get cflags from package deps
+function _get_cflags_from_packagedeps(package, opt)
+    local result = {}
+    for _, depname in ipairs(opt.packagedeps) do
+        local dep = type(depname) ~= "string" and depname or package:dep(depname)
+        if dep then
+            local fetchinfo = dep:fetch({external = false})
+            if fetchinfo then
+                table.join2(result, _map_compflags(package, "cxx", "define", fetchinfo.defines))
+                table.join2(result, _translate_paths(_map_compflags(package, "cxx", "includedir", fetchinfo.includedirs)))
+                table.join2(result, _translate_paths(_map_compflags(package, "cxx", "sysincludedir", fetchinfo.sysincludedirs)))
+            end
+        end
+    end
+    return result
+end
+
+-- get ldflags from package deps
+function _get_ldflags_from_packagedeps(package, opt)
+    local result = {}
+    for _, depname in ipairs(opt.packagedeps) do
+        local dep = type(depname) ~= "string" and depname or package:dep(depname)
+        if dep then
+            local fetchinfo = dep:fetch({external = false})
+            if fetchinfo then
+                table.join2(result, _translate_paths(_map_linkflags(package, "binary", {"cxx"}, "linkdir", fetchinfo.linkdirs)))
+                table.join2(result, _map_linkflags(package, "binary", {"cxx"}, "link", fetchinfo.links))
+                table.join2(result, _translate_paths(_map_linkflags(package, "binary", {"cxx"}, "syslink", fetchinfo.syslinks)))
+                table.join2(result, _map_linkflags(package, "binary", {"cxx"}, "framework", fetchinfo.frameworks))
+            end
+        end
+    end
+    return result
 end
 
 -- get the build environments
 function buildenvs(package, opt)
     opt = opt or {}
     local envs = {}
-    if package:is_plat(os.subhost()) then
-        local cflags   = table.join(table.wrap(package:config("cxflags")), package:config("cflags"))
-        local cxxflags = table.join(table.wrap(package:config("cxflags")), package:config("cxxflags"))
-        local asflags  = table.copy(table.wrap(package:config("asflags")))
-        local ldflags  = table.copy(table.wrap(package:config("ldflags")))
+    local cross = false
+    local cflags, cxxflags, cppflags, asflags, ldflags, shflags, arflags
+    if not _is_cross_compilation(package) and not package:config("toolchains") then
+        cppflags = {}
+        cflags   = table.join(table.wrap(package:config("cxflags")), package:config("cflags"))
+        cxxflags = table.join(table.wrap(package:config("cxflags")), package:config("cxxflags"))
+        asflags  = table.copy(table.wrap(package:config("asflags")))
+        ldflags  = table.copy(table.wrap(package:config("ldflags")))
+        shflags  = table.copy(table.wrap(package:config("shflags")))
         if package:is_plat("linux") and package:is_arch("i386") then
             table.insert(cflags,   "-m32")
             table.insert(cxxflags, "-m32")
             table.insert(asflags,  "-m32")
             table.insert(ldflags,  "-m32")
+            table.insert(shflags,  "-m32")
         end
         table.join2(cflags,   opt.cflags)
         table.join2(cflags,   opt.cxflags)
         table.join2(cxxflags, opt.cxxflags)
         table.join2(cxxflags, opt.cxflags)
+        table.join2(cppflags, opt.cppflags) -- @see https://github.com/xmake-io/xmake/issues/1688
         table.join2(asflags,  opt.asflags)
         table.join2(ldflags,  opt.ldflags)
-        envs.CFLAGS    = table.concat(cflags, ' ')
-        envs.CXXFLAGS  = table.concat(cxxflags, ' ')
-        envs.ASFLAGS   = table.concat(asflags, ' ')
-        envs.LDFLAGS   = table.concat(ldflags, ' ')
+        table.join2(shflags,  opt.shflags)
+        table.join2(cflags,   _get_cflags_from_packagedeps(package, opt))
+        table.join2(cxxflags, _get_cflags_from_packagedeps(package, opt))
+        table.join2(cppflags, _get_cflags_from_packagedeps(package, opt))
+        table.join2(ldflags,  _get_ldflags_from_packagedeps(package, opt))
+        table.join2(shflags,  _get_ldflags_from_packagedeps(package, opt))
     else
-        local cflags         = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cflags"))
-        local cxxflags       = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cxxflags"))
-        local asflags        = table.copy(table.wrap(package:build_getenv("asflags")))
-        local ldflags        = table.copy(table.wrap(package:build_getenv("ldflags")))
-        local shflags        = table.copy(table.wrap(package:build_getenv("shflags")))
+        cross = true
+        cppflags = {}
+        cflags   = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cflags"))
+        cxxflags = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cxxflags"))
+        asflags  = table.copy(table.wrap(package:build_getenv("asflags")))
+        ldflags  = table.copy(table.wrap(package:build_getenv("ldflags")))
+        shflags  = table.copy(table.wrap(package:build_getenv("shflags")))
+        arflags  = table.copy(table.wrap(package:build_getenv("arflags")))
         local defines        = package:build_getenv("defines")
         local includedirs    = package:build_getenv("includedirs")
         local sysincludedirs = package:build_getenv("sysincludedirs")
@@ -149,9 +266,15 @@ function buildenvs(package, opt)
         table.join2(cflags,   opt.cxflags)
         table.join2(cxxflags, opt.cxxflags)
         table.join2(cxxflags, opt.cxflags)
+        table.join2(cppflags, opt.cppflags) -- @see https://github.com/xmake-io/xmake/issues/1688
         table.join2(asflags,  opt.asflags)
         table.join2(ldflags,  opt.ldflags)
         table.join2(shflags,  opt.shflags)
+        table.join2(arflags,  opt.arflags)
+        table.join2(cflags,   _get_cflags_from_packagedeps(package, opt))
+        table.join2(cxxflags, _get_cflags_from_packagedeps(package, opt))
+        table.join2(cppflags, _get_cflags_from_packagedeps(package, opt))
+        table.join2(ldflags,  _get_ldflags_from_packagedeps(package, opt))
         table.join2(cflags,   _map_compflags(package, "c", "define", defines))
         table.join2(cflags,   _map_compflags(package, "c", "includedir", includedirs))
         table.join2(cflags,   _map_compflags(package, "c", "sysincludedir", sysincludedirs))
@@ -174,12 +297,55 @@ function buildenvs(package, opt)
         envs.LDSHARED  = package:build_getenv("sh")
         envs.CPP       = package:build_getenv("cpp")
         envs.RANLIB    = package:build_getenv("ranlib")
-        envs.CFLAGS    = table.concat(cflags, ' ')
-        envs.CXXFLAGS  = table.concat(cxxflags, ' ')
-        envs.ASFLAGS   = table.concat(asflags, ' ')
-        envs.ARFLAGS   = table.concat(table.wrap(package:build_getenv("arflags")), ' ')
-        envs.LDFLAGS   = table.concat(ldflags, ' ')
-        envs.SHFLAGS   = table.concat(shflags, ' ')
+    end
+    if package:is_plat("linux", "bsd") and
+        package:config("pic") ~= false and not _has_with_pic(package) then
+        table.insert(cflags, "-fPIC")
+        table.insert(cxxflags, "-fPIC")
+    end
+    if package:config("lto") then
+        table.join2(cflags, package:_generate_lto_configs("cc").cflags)
+        table.join2(cxxflags, package:_generate_lto_configs("cxx").cxxflags)
+        table.join2(ldflags, package:_generate_lto_configs().ldflags)
+    end
+    local runtimes = package:runtimes()
+    if runtimes then
+        local fake_target = {is_shared = function(_) return false end,
+                             sourcekinds = function(_) return "cxx" end}
+        table.join2(cxxflags, _map_compflags(fake_target, "cxx", "runtime", runtimes))
+        table.join2(ldflags, _map_linkflags(fake_target, "binary", {"cxx"}, "runtime", runtimes))
+        fake_target = {is_shared = function(_) return true end,
+                       sourcekinds = function(_) return "cxx" end}
+        table.join2(shflags, _map_linkflags(fake_target, "shared", {"cxx"}, "runtime", runtimes))
+    end
+    if package:config("asan") then
+        table.join2(cflags, package:_generate_sanitizer_configs("address", "cc").cflags)
+        table.join2(cxxflags, package:_generate_sanitizer_configs("address", "cxx").cxxflags)
+        table.join2(ldflags, package:_generate_sanitizer_configs("address").ldflags)
+        table.join2(shflags, package:_generate_sanitizer_configs("address").shflags)
+    end
+    if cflags then
+        envs.CFLAGS    = table.concat(_translate_paths(cflags), ' ')
+    end
+    if cxxflags then
+        envs.CXXFLAGS  = table.concat(_translate_paths(cxxflags), ' ')
+    end
+    if cppflags then
+        envs.CPPFLAGS  = table.concat(_translate_paths(cppflags), ' ')
+    end
+    if asflags then
+        envs.ASFLAGS   = table.concat(_translate_paths(asflags), ' ')
+    end
+    if arflags then
+        envs.ARFLAGS   = table.concat(_translate_paths(arflags), ' ')
+    end
+    if ldflags or shflags then
+        -- autoconf does not use SHFLAGS
+        envs.LDFLAGS   = table.concat(_translate_paths(table.join(ldflags or {}, shflags)), ' ')
+    end
+
+    -- cross-compilation? pass the full build environments
+    if cross then
         if package:is_plat("mingw") then
             -- fix linker error, @see https://github.com/xmake-io/xmake/issues/574
             -- libtool: line 1855: lib: command not found
@@ -192,23 +358,68 @@ function buildenvs(package, opt)
                     envs.LD = path.join(path.directory(ld), is_host("windows") and "ld" or "i686-w64-mingw32-ld")
                 end
             end
-            if is_host("windows") then
-                envs.CC       = _translate_windows_bin_path(envs.CC)
-                envs.AS       = _translate_windows_bin_path(envs.AS)
-                envs.AR       = _translate_windows_bin_path(envs.AR)
-                envs.LD       = _translate_windows_bin_path(envs.LD)
-                envs.LDSHARED = _translate_windows_bin_path(envs.LDSHARED)
-                envs.CPP      = _translate_windows_bin_path(envs.CPP)
-                envs.RANLIB   = _translate_windows_bin_path(envs.RANLIB)
+        else
+            if package:is_plat("macosx") then
+                -- force to apply shflags on macosx https://gmplib.org/manual/Known-Build-Problems
+                envs.CC = envs.CC .. " -arch " .. package:arch()
             end
-        elseif package:is_plat("cross") then
-            -- only for cross-toolchain
-            envs.CXX = package:build_getenv("cxx")
+            if package:is_plat("cross") or package:has_tool("ar", "ar", "emar") then
+                -- only for cross-toolchain
+                envs.CXX = package:build_getenv("cxx")
+                if not envs.ARFLAGS or envs.ARFLAGS == "" then
+                    envs.ARFLAGS = "-cr"
+                end
+            end
         end
+
+        -- we should use ld as linker
+        --
+        -- @see
+        -- https://github.com/xmake-io/xmake-repo/pull/1043
+        -- https://github.com/libexpat/libexpat/issues/312
+        -- https://github.com/xmake-io/xmake/issues/2195
+        local ld = envs.LD
+        if ld and package:has_tool("ld", "clang", "clangxx", "gcc", "gxx") then
+            local dir = path.directory(ld)
+            local name = path.filename(ld)
+            name = name:gsub("clang%+%+$", "ld")
+            name = name:gsub("clang%+%+%-%d+", "ld")
+            name = name:gsub("clang$", "ld")
+            name = name:gsub("clang%-%d+", "ld")
+            name = name:gsub("gcc$", "ld")
+            name = name:gsub("gcc-%d+", "ld")
+            name = name:gsub("g%+%+$", "ld")
+            name = name:gsub("g%+%+%-%d+", "ld")
+            envs.LD = dir and path.join(dir, name) or name
+        end
+        -- we need use clang++ as cxx, autoconf will use it as linker
+        -- https://github.com/xmake-io/xmake/issues/2170
+        local cxx = envs.CXX
+        if cxx and package:has_tool("cxx", "clang", "gcc") then
+            local dir = path.directory(cxx)
+            local name = path.filename(cxx)
+            name = name:gsub("clang$", "clang++")
+            name = name:gsub("clang%-", "clang++-")
+            name = name:gsub("gcc$", "g++")
+            name = name:gsub("gcc%-", "g++-")
+            envs.CXX = dir and path.join(dir, name) or name
+        end
+    elseif package:is_plat("windows") and not package:config("toolchains") then
+        envs.PATH = os.getenv("PATH") -- we need to reserve PATH on msys2
+        envs = os.joinenvs(envs, _get_msvc(package):runenvs())
+    end
+    if is_host("windows") then
+        envs.CC       = _translate_windows_bin_path(envs.CC)
+        envs.AS       = _translate_windows_bin_path(envs.AS)
+        envs.AR       = _translate_windows_bin_path(envs.AR)
+        envs.LD       = _translate_windows_bin_path(envs.LD)
+        envs.LDSHARED = _translate_windows_bin_path(envs.LDSHARED)
+        envs.CPP      = _translate_windows_bin_path(envs.CPP)
+        envs.RANLIB   = _translate_windows_bin_path(envs.RANLIB)
     end
     local ACLOCAL_PATH = {}
     local PKG_CONFIG_PATH = {}
-    for _, dep in ipairs(package:orderdeps()) do
+    for _, dep in ipairs(package:librarydeps({private = true})) do
         local pkgconfig = path.join(dep:installdir(), "lib", "pkgconfig")
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
@@ -217,13 +428,24 @@ function buildenvs(package, opt)
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
         end
+    end
+    -- some binary packages contain it too. e.g. libtool
+    for _, dep in ipairs(package:orderdeps()) do
         local aclocal = path.join(dep:installdir(), "share", "aclocal")
         if os.isdir(aclocal) then
             table.insert(ACLOCAL_PATH, aclocal)
         end
     end
-    envs.ACLOCAL_PATH    = path.joinenv(ACLOCAL_PATH)
-    envs.PKG_CONFIG_PATH = path.joinenv(PKG_CONFIG_PATH)
+    envs.ACLOCAL_PATH = path.joinenv(ACLOCAL_PATH)
+    -- fix PKG_CONFIG_PATH for windows/msys2
+    -- @see https://github.com/xmake-io/xmake-repo/issues/3442
+    if package:is_plat("windows") then
+        -- pkg-config can only support for unix path and env seperator on msys/cygwin
+        PKG_CONFIG_PATH = _translate_cygwin_paths(PKG_CONFIG_PATH)
+        envs.PKG_CONFIG_PATH = path.joinenv(PKG_CONFIG_PATH, ":")
+    else
+        envs.PKG_CONFIG_PATH = path.joinenv(PKG_CONFIG_PATH)
+    end
     return envs
 end
 
@@ -233,7 +455,7 @@ function autogen_envs(package, opt)
     local envs = {NOCONFIGURE = "yes"}
     local ACLOCAL_PATH = {}
     local PKG_CONFIG_PATH = {}
-    for _, dep in ipairs(package:orderdeps()) do
+    for _, dep in ipairs(package:librarydeps({private = true})) do
         local pkgconfig = path.join(dep:installdir(), "lib", "pkgconfig")
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
@@ -242,6 +464,9 @@ function autogen_envs(package, opt)
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
         end
+    end
+    -- some binary packages contain it too. e.g. libtool
+    for _, dep in ipairs(package:orderdeps()) do
         local aclocal = path.join(dep:installdir(), "share", "aclocal")
         if os.isdir(aclocal) then
             table.insert(ACLOCAL_PATH, aclocal)
@@ -258,20 +483,22 @@ function configure(package, configs, opt)
     -- init options
     opt = opt or {}
 
-    -- get envs
-    local envs = opt.envs or buildenvs(package, opt)
-
     -- generate configure file
     if not os.isfile("configure") then
         if os.isfile("autogen.sh") then
-            os.vrunv("sh", {"./autogen.sh"}, {envs = autogen_envs(package, opt)})
-        elseif os.isfile("configure.ac") then
-            os.vrunv("autoreconf", {"--install", "--symlink"}, {envs = autogen_envs(package, opt)})
+            os.vrunv("./autogen.sh", {}, {shell = true, envs = autogen_envs(package, opt)})
+        elseif os.isfile("configure.ac") or os.isfile("configure.in") then
+            local autoreconf = find_tool("autoreconf")
+            assert(autoreconf, "autoreconf not found!")
+            os.vrunv(autoreconf.program, {"--install", "--symlink"}, {shell = true, envs = autogen_envs(package, opt)})
         end
     end
 
+    -- get envs
+    local envs = opt.envs or buildenvs(package, opt)
+
     -- pass configurations
-    local argv = {"./configure"}
+    local argv = {}
     for name, value in pairs(_get_configs(package, configs)) do
         value = tostring(value):trim()
         if value ~= "" then
@@ -284,28 +511,83 @@ function configure(package, configs, opt)
     end
 
     -- do configure
-    os.vrunv("sh", argv, {envs = envs})
+    os.vrunv("./configure", argv, {shell = true, envs = envs})
 end
 
--- install package
-function install(package, configs, opt)
+-- do make
+function make(package, argv, opt)
+    opt = opt or {}
+    local program
+    if package:is_plat("mingw") and is_subhost("windows") then
+        local mingw = assert(package:build_getenv("mingw") or package:build_getenv("sdk"), "mingw not found!")
+        program = path.join(mingw, "bin", "mingw32-make.exe")
+    else
+        local tool = find_tool("make")
+        if tool then
+            program = tool.program
+        end
+    end
+    assert(program, "make not found!")
+
+    if package:is_plat("windows") then
+        local envs = opt.envs or buildenvs(package, opt)
+        os.vrunv(program, argv, {envs = envs})
+    else
+        os.vrunv(program, argv)
+    end
+end
+
+-- build package
+function build(package, configs, opt)
 
     -- do configure
     configure(package, configs, opt)
 
     -- do make and install
     opt = opt or {}
-    local njob = opt.jobs or option.get("jobs") or tostring(math.ceil(os.cpuinfo().ncpu * 3 / 2))
+    local njob = opt.jobs or option.get("jobs") or tostring(os.default_njob())
     local argv = {"-j" .. njob}
-    if option.get("verbose") then
+    if option.get("diagnosis") then
         table.insert(argv, "V=1")
     end
-    if is_host("bsd") then
-        os.vrunv("gmake", argv)
-        os.vrun("gmake install")
-    else
-        os.vrunv("make", argv)
-        os.vrun("make install")
+    if opt.makeconfigs then
+        for name, value in pairs(opt.makeconfigs) do
+            value = tostring(value):trim()
+            if value ~= "" then
+                if type(name) == "number" then
+                    table.insert(argv, value)
+                else
+                    table.insert(argv, name .. "=" .. value)
+                end
+            end
+        end
     end
+    make(package, argv, opt)
 end
 
+-- install package
+function install(package, configs, opt)
+
+    -- do build
+    opt = opt or {}
+    build(package, configs, opt)
+
+    -- do install
+    local argv = {"install"}
+    if option.get("diagnosis") then
+        table.insert(argv, "V=1")
+    end
+    if opt.makeconfigs then
+        for name, value in pairs(opt.makeconfigs) do
+            value = tostring(value):trim()
+            if value ~= "" then
+                if type(name) == "number" then
+                    table.insert(argv, value)
+                else
+                    table.insert(argv, name .. "=" .. value)
+                end
+            end
+        end
+    end
+    make(package, argv, opt)
+end

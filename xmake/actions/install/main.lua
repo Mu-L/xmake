@@ -21,6 +21,7 @@
 -- imports
 import("core.base.option")
 import("core.base.task")
+import("core.project.config")
 import("core.project.project")
 import("core.platform.platform")
 import("core.base.privilege")
@@ -28,16 +29,17 @@ import("privilege.sudo")
 import("install")
 
 -- check targets
-function _check_targets(targetname)
+function _check_targets(targetname, group_pattern)
 
     -- get targets
     local targets = {}
-    if targetname and not targetname:startswith("__") then
+    if targetname then
         table.insert(targets, project.target(targetname))
     else
         -- install default or all targets
         for _, target in pairs(project.targets()) do
-            if target:is_default() or targetname == "__all" then
+            local group = target:get("group")
+            if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
                 table.insert(targets, target)
             end
         end
@@ -46,7 +48,7 @@ function _check_targets(targetname)
     -- filter and check targets with builtin-install script
     local targetnames = {}
     for _, target in ipairs(targets) do
-        if not target:is_phony() and target:is_enabled() and not target:script("install") then
+        if target:targetfile() and target:is_enabled() and not target:script("install") then
             local targetfile = target:targetfile()
             if targetfile and not os.isfile(targetfile) then
                 table.insert(targetnames, target:name())
@@ -56,31 +58,33 @@ function _check_targets(targetname)
 
     -- there are targets that have not yet been built?
     if #targetnames > 0 then
-        raise("please run `$xmake [target]` to build the following targets first:\n  -> " .. table.concat(targetnames, '\n  -> '))
+        raise("please run `$xmake build [target]` to build the following targets first:\n  -> " .. table.concat(targetnames, '\n  -> '))
     end
 end
 
--- main
 function main()
 
-    -- get the target name
-    local targetname = option.get("target")
+    -- load config first
+    config.load()
 
-    -- config it first
-    task.run("config", {target = targetname, require = "n", verbose = false})
+    -- load targets
+    project.load_targets()
 
     -- check targets first
-    _check_targets(targetname)
+    local targetname
+    local group_pattern = option.get("group")
+    if group_pattern then
+        group_pattern = "^" .. path.pattern(group_pattern) .. "$"
+    else
+        targetname = option.get("target")
+    end
+    _check_targets(targetname, group_pattern)
 
     -- attempt to install directly
     try
     {
         function ()
-
-            -- install target
-            install(targetname or ifelse(option.get("all"), "__all", "__def"))
-
-            -- trace
+            install(targetname or (option.get("all") and "__all" or "__def"), group_pattern)
             cprint("${color.success}install ok!")
         end,
 
@@ -94,23 +98,17 @@ function main()
                     local ok = try
                     {
                         function ()
-
-                            -- install target
-                            install(targetname or ifelse(option.get("all"), "__all", "__def"))
-
-                            -- trace
+                            install(targetname or (option.get("all") and "__all" or "__def"), group_pattern)
                             cprint("${color.success}install ok!")
-
-                            -- ok
                             return true
                         end
                     }
 
                     -- release privilege
                     privilege.store()
-
-                    -- ok?
-                    if ok then return end
+                    if ok then
+                        return
+                    end
                 end
 
                 -- continue to install with administrator permission?
@@ -118,14 +116,15 @@ function main()
                 if sudo.has() and option.get("admin") then
 
                     -- install target with administrator permission
-                    sudo.runl(path.join(os.scriptdir(), "install_admin.lua"), {targetname or ifelse(option.get("all"), "__all", "__def"), option.get("installdir"), option.get("prefix")})
-
-                    -- trace
+                    sudo.execl(path.join(os.scriptdir(), "install_admin.lua"), {targetname or (option.get("all") and "__all" or "__def"), group_pattern, option.get("installdir"), option.get("prefix")})
                     cprint("${color.success}install ok!")
                     ok = true
                 end
-                if not ok and os.syserror() == os.SYSERR_NOT_PERM then
-                    wprint("please pass the --admin parameter to `xmake install` to request administrator permissions!")
+                if not ok then
+                    local syserror = os.syserror()
+                    if syserror == os.SYSERR_NOT_PERM or syserror == os.SYSERR_NOT_ACCESS then
+                        wprint("please pass the --admin parameter to `xmake install` to request administrator permissions!")
+                    end
                 end
                 assert(ok, "install failed, %s", errors or "unknown reason")
             end

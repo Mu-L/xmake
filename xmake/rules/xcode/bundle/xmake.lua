@@ -25,7 +25,7 @@ rule("xcode.bundle")
     add_deps("xcode.info_plist")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
-    before_load(function (target)
+    on_load(function (target)
 
         -- get bundle directory
         local targetdir = target:targetdir()
@@ -42,15 +42,24 @@ rule("xcode.bundle")
         target:data_set("xcode.bundle.contentsdir", contentsdir)
         target:data_set("xcode.bundle.resourcesdir", resourcesdir)
 
-        -- set target info for bundle
-        target:set("filename", target:basename())
+        -- register clean files for `xmake clean`
+        target:add("cleanfiles", bundledir)
 
         -- generate binary as bundle, we cannot set `-shared` or `-dynamiclib`
         target:set("kind", "binary")
-        target:add("ldflags", "-bundle", {force = true})
 
-        -- register clean files for `xmake clean`
-        target:add("cleanfiles", bundledir)
+        -- set target info for bundle
+        target:set("filename", target:basename())
+    end)
+
+    on_config(function (target)
+        -- add bundle flags
+        local linker = target:linker():name()
+        if linker == "swiftc" then
+            target:add("ldflags", "-Xlinker -bundle", {force = true})
+        else
+            target:add("ldflags", "-bundle", {force = true})
+        end
     end)
 
     after_build(function (target, opt)
@@ -60,7 +69,7 @@ rule("xcode.bundle")
         import("core.theme.theme")
         import("core.project.depend")
         import("private.tools.codesign")
-        import("private.utils.progress")
+        import("utils.progress")
 
         -- get bundle and resources directory
         local bundledir = path.absolute(target:data("xcode.bundle.rootdir"))
@@ -100,7 +109,7 @@ rule("xcode.bundle")
             end
             codesign(bundledir, codesign_identity)
 
-        end, {dependfile = target:dependfile(bundledir), files = {bundledir, target:targetfile()}})
+        end, {dependfile = target:dependfile(bundledir), files = {bundledir, target:targetfile()}, changed = target:is_rebuilt()})
     end)
 
     on_install(function (target)

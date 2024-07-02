@@ -29,12 +29,22 @@ function xmake.name()
     return xmake._NAME or "xmake"
 end
 
--- get xmake version
+-- get xmake version, e.g. v2.5.8+dev.d4cff6e11
 function xmake.version()
     if xmake._VERSION_CACHE == nil then
         xmake._VERSION_CACHE = semver.new(xmake._VERSION) or false
     end
     return xmake._VERSION_CACHE or nil
+end
+
+-- get the xmake binary architecture
+function xmake.arch()
+    return xmake._XMAKE_ARCH
+end
+
+-- get the git branch of xmake version, e.g. build: {"dev", "d4cff6e11"}
+function xmake.branch()
+    return xmake.version():build()[1]
 end
 
 -- get the program directory
@@ -45,6 +55,16 @@ end
 -- get the program file
 function xmake.programfile()
     return xmake._PROGRAM_FILE
+end
+
+-- use luajit?
+function xmake.luajit()
+    return xmake._LUAJIT
+end
+
+-- get command arguments
+function xmake.argv()
+    return xmake._ARGV
 end
 
 -- return module: xmake

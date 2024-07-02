@@ -32,6 +32,9 @@ end
 -- create project from template
 function _create_project(language, templateid, targetname)
 
+    -- check the targetname
+    assert(targetname ~= ".", "you should specify ${red}-P${reset} instead of directly using ${red}.${reset}")
+
     -- check the language
     assert(language, "no language!")
 
@@ -76,13 +79,13 @@ function _create_project(language, templateid, targetname)
     end
 
     -- xmake.lua exists?
-    if os.isfile(path.join(projectdir, "xmake.lua")) then
+    if os.isfile(path.join(projectdir, "xmake.lua")) and not option.get("force") then
         raise("project (${underline}%s/xmake.lua${reset}) exists!", projectdir)
     end
 
     -- empty project?
     os.tryrm(path.join(projectdir, ".xmake"))
-    if not os.emptydir(projectdir) then
+    if not os.emptydir(projectdir) and not option.get("force") then
         -- otherwise, check whether it is empty
         raise("project directory (${underline}%s${reset}) is not empty!", projectdir)
     end

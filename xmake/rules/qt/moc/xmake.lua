@@ -20,14 +20,20 @@
 
 rule("qt.moc")
     add_deps("qt.env")
+    add_deps("qt.ui", {order = true})
     set_extensions(".h", ".hpp")
     before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
-
-        -- imports
         import("core.tool.compiler")
 
         -- get moc
-        local moc = path.join(target:data("qt").bindir, is_host("windows") and "moc.exe" or "moc")
+        local qt = assert(target:data("qt"), "Qt not found!")
+        local moc = path.join(qt.bindir, is_host("windows") and "moc.exe" or "moc")
+        if not os.isexec(moc) and qt.libexecdir then
+            moc = path.join(qt.libexecdir, is_host("windows") and "moc.exe" or "moc")
+        end
+        if not os.isexec(moc) and qt.libexecdir_host then
+            moc = path.join(qt.libexecdir_host, is_host("windows") and "moc.exe" or "moc")
+        end
         assert(moc and os.isexec(moc), "moc not found!")
 
         -- get c++ source file for moc
@@ -40,7 +46,8 @@ rule("qt.moc")
         if sourcefile:endswith(".cpp") then
             filename_moc = basename .. ".moc"
         end
-        local sourcefile_moc = path.join(target:autogendir(), "rules", "qt", "moc", filename_moc)
+        -- we need to retain the file directory structure, @see https://github.com/xmake-io/xmake/issues/2343
+        local sourcefile_moc = target:autogenfile(path.join(path.directory(sourcefile), filename_moc))
 
         -- add objectfile
         local objectfile = target:objectfile(sourcefile_moc)
@@ -49,16 +56,44 @@ rule("qt.moc")
         -- add commands
         batchcmds:show_progress(opt.progress, "${color.build.object}compiling.qt.moc %s", sourcefile)
 
+        -- get values from target
+        -- @see https://github.com/xmake-io/xmake/issues/3930
+        local function _get_values_from_target(target, name)
+            local values = {}
+            for _, value in ipairs((target:get_from(name, "*"))) do
+                table.join2(values, value)
+            end
+            return table.unique(values)
+        end
+
         -- generate c++ source file for moc
         local flags = {}
-        table.join2(flags, compiler.map_flags("cxx", "define", target:get("defines")))
-        table.join2(flags, compiler.map_flags("cxx", "includedir", target:get("includedirs")))
-        table.join2(flags, compiler.map_flags("cxx", "sysincludedir", target:get("sysincludedirs")))
-        table.join2(flags, compiler.map_flags("cxx", "frameworkdir", target:get("frameworkdirs")))
+        table.join2(flags, compiler.map_flags("cxx", "define", _get_values_from_target(target, "defines")))
+        local pathmaps = {
+            {"includedirs", "includedir"},
+            {"sysincludedirs", "includedir"}, -- for now, moc process doesn't support MSVC external includes flags and will fail
+            {"frameworkdirs", "frameworkdir"}
+        }
+        for _, pathmap in ipairs(pathmaps) do
+            for _, item in ipairs(_get_values_from_target(target, pathmap[1])) do
+                local pathitem = path(item, function (p)
+                    local item = table.unwrap(compiler.map_flags("cxx", pathmap[2], p))
+                    if item then
+                        -- we always need use '/' to fix it for project generator, because it will use path.translate in cl.lua
+                        item = item:gsub("\\", "/")
+                    end
+                    return item
+                end)
+                if not pathitem:empty() then
+                    table.insert(flags, pathitem)
+                end
+            end
+        end
+        local user_flags = target:get("qt.moc.flags") or {}
         batchcmds:mkdir(path.directory(sourcefile_moc))
-        batchcmds:vrunv(moc, table.join(flags, sourcefile, "-o", sourcefile_moc))
+        batchcmds:vrunv(moc, table.join(user_flags, flags, path(sourcefile), "-o", path(sourcefile_moc)))
 
-        -- we need compile this moc_xxx.cpp file if exists Q_PRIVATE_SLOT, @see https://github.com/xmake-io/xmake/issues/750
+        -- we need to compile this moc_xxx.cpp file if exists Q_PRIVATE_SLOT, @see https://github.com/xmake-io/xmake/issues/750
         local mocdata = io.readfile(sourcefile)
         if mocdata and mocdata:find("Q_PRIVATE_SLOT") or sourcefile_moc:endswith(".moc") then
             -- add includedirs of sourcefile_moc
@@ -72,13 +107,15 @@ rule("qt.moc")
                     break
                 end
             end
+            batchcmds:set_depmtime(os.mtime(sourcefile_moc))
+            batchcmds:set_depcache(target:dependfile(sourcefile_moc))
         else
             -- compile c++ source file for moc
             batchcmds:compile(sourcefile_moc, objectfile)
+            batchcmds:set_depmtime(os.mtime(objectfile))
+            batchcmds:set_depcache(target:dependfile(objectfile))
         end
 
         -- add deps
         batchcmds:add_depfiles(sourcefile)
-        batchcmds:set_depmtime(os.mtime(objectfile))
-        batchcmds:set_depcache(target:dependfile(objectfile))
     end)

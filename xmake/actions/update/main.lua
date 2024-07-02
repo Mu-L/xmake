@@ -29,11 +29,12 @@ import("devel.git")
 import("net.fasturl")
 import("core.base.privilege")
 import("privilege.sudo")
-import("private.async.runjobs")
+import("async.runjobs")
 import("private.action.require.impl.environment")
 import("private.action.update.fetch_version")
 import("utils.archive")
 import("lib.detect.find_file")
+import("lib.detect.find_tool")
 
 -- the installer filename for windows
 local win_installer_name = "xmake-installer.exe"
@@ -106,6 +107,33 @@ end
 
 -- do uninstall
 function _uninstall()
+
+    -- remove shell profile
+    local profiles = {}
+    if is_host("windows") then
+        for _, shell in ipairs({"pwsh", "powershell"}) do
+            for _, type in ipairs({"AllUsersAllHosts", "CurrentUserAllHosts", "CurrentUserCurrentHost"}) do
+                local psshell = find_tool(shell)
+                if psshell then
+                    local outdata, errdata = try {function () return os.iorunv(psshell.program, {"-c", "Write-Output $PROFILE." .. type}) end}
+                    if outdata then
+                        table.insert(profiles, outdata:trim())
+                    end
+                end
+            end
+        end
+    else
+        for _, filename in ipairs({".zshrc", ".bashrc", ".kshrc", ".bash_profile", ".profile"}) do
+            table.insert(profiles, path.join(os.getenv("HOME"), filename))
+        end
+    end
+    for _, profile in ipairs(profiles) do
+        if os.isfile(profile) then
+            io.gsub(profile, "# >>> xmake >>>.-# <<< xmake <<<", "")
+        end
+    end
+
+    -- remove program
     if is_host("windows") then
         local uninstaller = path.join(os.programdir(), "uninstall.exe")
         if os.isfile(uninstaller) then
@@ -121,17 +149,17 @@ function _uninstall()
         end
     else
         if os.programdir():startswith("/usr/") then
-            _sudo_v("xmake", {"lua", "rm", os.programdir() })
-            if os.isfile("/usr/local/bin/xmake") then
-                _sudo_v("xmake", {"lua", "rm", "/usr/local/bin/xmake" })
-            end
-            if os.isfile("/usr/bin/xmake") then
-                _sudo_v("xmake", {"lua", "rm", "/usr/bin/xmake" })
+            _sudo_v(os.programfile(), {"lua", "rm", os.programdir()})
+            for _, f in ipairs({"/usr/local/bin/xmake", "/usr/local/bin/xrepo", "/usr/bin/xmake", "/usr/bin/xrepo"}) do
+                if os.isfile(f) then
+                    _sudo_v(os.programfile(), {"lua", "rm", f})
+                end
             end
         else
             os.rm(os.programdir())
             os.rm(os.programfile())
             os.rm("~/.local/bin/xmake")
+            os.rm("~/.local/bin/xrepo")
         end
     end
 end
@@ -158,9 +186,18 @@ function _install(sourcedir)
                     if os.isfile(win_installer_name) then
                         -- /D sets the default installation directory ($INSTDIR), overriding InstallDir and InstallDirRegKey. It must be the last parameter used in the command line and must not contain any quotes, even if the path contains spaces. Only absolute paths are supported.
                         local params = ("/D=" .. os.programdir()):split("%s", { strict = true })
-                        local testfile = path.join(os.programdir(), "temp-install")
-                        local no_admin = os.trycp(path.join(os.programdir(), "scripts", "run.vbs"), testfile)
-                        os.tryrm(testfile)
+                        -- @see https://github.com/xmake-io/xmake/issues/1576
+                        local no_admin = try {function () return winos.registry_query("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\XMake;NoAdmin") end}
+                        if no_admin == nil then
+                            no_admin = try {function () return winos.registry_query("HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\XMake;NoAdmin") end}
+                        end
+                        if no_admin ~= nil then
+                            no_admin = tostring(no_admin):lower() == "true"
+                        else
+                            local testfile = path.join(os.programdir(), "temp-install")
+                            no_admin = os.trycp(path.join(os.programdir(), "scripts", "run.vbs"), testfile)
+                            os.tryrm(testfile)
+                        end
                         if no_admin then table.insert(params, 1, "/NOADMIN") end
                         -- need UAC?
                         if winos:version():gt("winxp") then
@@ -172,8 +209,11 @@ function _install(sourcedir)
                         raise("the installer(%s) not found!", win_installer_name)
                     end
                 else
-                    os.vrun("make build")
-                    process.openv("./scripts/get.sh", {"__local__", "__install_only__"}, {stdout = os.tmpfile(), stderr = os.tmpfile()}, {detach = true}):close()
+                    if os.isfile("./configure") then
+                        os.vrun("./configure")
+                    end
+                    os.vrunv("make", {"-j4"})
+                    process.openv("./scripts/get.sh", {"__local__", "__install_only__"}, {stdout = os.tmpfile(), stderr = os.tmpfile(), detach = true}):close()
                 end
                 return true
             end,
@@ -223,7 +263,7 @@ function _install_script(sourcedir)
                 local script_original = path.join(os.programdir(), "scripts", "update-script.bat")
                 local script = os.tmpfile() .. ".bat"
                 os.cp(script_original, script)
-                local params = { "/c", script, os.programdir(),  source }
+                local params = { "/c", script, os.programdir(), source }
                 os.tryrm(script_original .. ".bak")
                 local access = os.trymv(script_original, script_original .. ".bak")
                 _run_win_v("cmd", params, not access)
@@ -243,6 +283,80 @@ function _install_script(sourcedir)
     -- trace
     if ok then
         cprint("${color.success}${text.success}")
+    else
+        cprint("${color.failure}${text.failure}")
+    end
+end
+
+-- initialize shells
+function _initialize_shell()
+
+    local target, command
+    if is_host("windows") then
+        local psshell = find_tool("pwsh") or find_tool("powershell")
+        local outdata, errdata = try {function () return os.iorunv(psshell.program, {"-c", "Write-Output $PROFILE.CurrentUserAllHosts"}) end}
+        if outdata then
+            target = outdata:trim()
+            local profile = path.join(os.programdir(), "scripts", "profile-win.ps1")
+            command = format("if (Test-Path -Path \"%s\" -PathType Leaf) {\n    . \"%s\"\n}", profile, profile)
+        else
+            raise("failed to get profile location from powershell!")
+        end
+    else
+        target = "~/.profile"
+        local shell = os.shell()
+        if shell:endswith("bash") then target = (is_host("macosx") and "~/.bash_profile" or "~/.bashrc")
+        elseif shell:endswith("zsh") then target = "~/.zshrc"
+        elseif shell:endswith("ksh") then target = "~/.kshrc"
+        elseif shell:endswith("fish") then target = "~/.config/fish/config.fish"
+        end
+        local profile_home = path.absolute("~/.xmake/profile")
+        command = ("test -f \"%s\" && source \"%s\""):format(profile_home, profile_home)
+
+        -- write home profile
+        local profile = "$XMAKE_PROGRAM_DIR/scripts/profile-unix.sh"
+        local profile_fish = "$XMAKE_PROGRAM_DIR/scripts/profile-unix.fish"
+        local bridge_command = format([[export XMAKE_ROOTDIR="%s"
+export XMAKE_PROGRAM_DIR="%s"
+# export PATH="$XMAKE_ROOTDIR:$PATH"
+test $FISH_VERSION && test -f "%s" && source "%s" && exit 0
+test -f "%s" && source "%s"
+]], path.directory(os.programfile()), os.programdir(), profile_fish, profile_fish, profile, profile)
+        io.writefile(profile_home, bridge_command)
+    end
+
+    -- trace
+    cprintf("\r${yellow}  => ${clear}installing shell integration to %s .. ", target)
+
+    local ok = try
+    {
+        function ()
+            local file = ""
+            if os.isfile(target) then
+                file = io.readfile(target)
+                file = file:gsub("# >>> xmake >>>.-# <<< xmake <<<", "")
+                if file ~= "" and not file:endswith("\n") then
+                    file = file .. "\n"
+                end
+            end
+            file = file .. "# >>> xmake >>>\n" .. command .. "\n# <<< xmake <<<"
+            io.writefile(target, file)
+            return true
+        end,
+        catch
+        {
+            function (errors)
+                vprint(errors)
+            end
+        }
+    }
+    -- trace
+    if ok then
+        cprint("${color.success}${text.success}")
+        if not is_host("windows") then
+            print("Reload shell profile by running the following command now!")
+            cprint("${bright}source ~/.xmake/profile${clear}")
+        end
     else
         cprint("${color.failure}${text.failure}")
     end
@@ -289,6 +403,12 @@ function main()
         return
     end
 
+    -- initialize for shell interaction
+    if option.get("integrate") then
+        _initialize_shell()
+        return
+    end
+
     -- enter environment
     environment.enter()
 
@@ -311,17 +431,15 @@ function main()
 
         local winarch = os.arch() == "x64" and "win64" or "win32"
         if version:find('.', 1, true) then
-            mainurls = {format("https://ci.appveyor.com/api/projects/waruqi/xmake/artifacts/xmake-installer.exe?tag=%s&pr=false&job=Image%%3A+Visual+Studio+2017%%3B+Platform%%3A+%s", version, os.arch()),
-                        format("https://github.com/xmake-io/xmake/releases/download/%s/xmake-%s.%s.exe", version, version, winarch),
-                        format("https://cdn.jsdelivr.net/gh/xmake-mirror/xmake-releases@%s/xmake-%s.%s.exe.zip", version, version, winarch),
-                        format("https://gitlab.com/xmake-mirror/xmake-releases/raw/%s/xmake-%s.%s.exe.zip", version, version, winarch)}
+            mainurls = {format("https://github.com/xmake-io/xmake/releases/download/%s/xmake-%s.%s.exe", version, version, winarch),
+                        format("https://fastly.jsdelivr.net/gh/xmake-mirror/xmake-releases@%s/xmake-%s.%s.exe.zip", version, version, winarch),
+                        format("https://gitlab.com/xmake-mirror/xmake-releases/-/raw/%s/xmake-%s.%s.exe.zip", (version:gsub("^v", "")), version, winarch)}
         else
             -- regard as a git branch, fetch from ci
             local tags = fetchinfo.tags
             table.sort(tags)
             local latest_version = tags[#tags] or ("v" .. xmake.version():shortstr())
-            mainurls = {format("https://ci.appveyor.com/api/projects/waruqi/xmake/artifacts/xmake-installer.exe?branch=%s&pr=false&job=Image%%3A+Visual+Studio+2017%%3B+Platform%%3A+%s", version, os.arch()),
-                        format("https://github.com/xmake-io/xmake/releases/download/%s/xmake-%s.%s.exe", latest_version, version, winarch)}
+            mainurls = {format("https://github.com/xmake-io/xmake/releases/download/%s/xmake-%s.%s.exe", latest_version, version, winarch)}
         end
 
         -- re-sort mainurls

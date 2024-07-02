@@ -51,14 +51,6 @@ function program:init(name, argv)
         curses.mousemask(curses.ALL_MOUSE_EVENTS)
     end
 
-    -- to filter characters being output to the screen
-    -- this will filter all characters where a chtype or chstr is used
-    curses.map_output(true)
-
-    -- on WIN32 ALT keys need to be mapped, so to make sure you get the wanted keys,
-    -- only makes sense when using keypad(true) and echo(false)
-    curses.map_keyboard(true)
-
     -- init colors
     if (curses.has_colors()) then
         curses.start_color()
@@ -345,6 +337,15 @@ function program:_key_map()
             [curses.KEY_SHOME       ] = "ShiftHome",
             [curses.KEY_SLEFT       ] = "ShiftLeft",
             [curses.KEY_SRIGHT      ] = "ShiftRight",
+
+            -- register virtual keys
+            --
+            -- @see https://github.com/xmake-io/xmake/issues/1610
+            -- https://github.com/wmcbrine/PDCurses/blob/HEAD/curses.h#L766-L774
+            [curses.KEY_C2 or -1    ] = "Down",
+            [curses.KEY_A2 or -1    ] = "Up",
+            [curses.KEY_B1 or -1    ] = "Left",
+            [curses.KEY_B3 or -1    ] = "Right"
         }
     end
     return self._KEYMAP

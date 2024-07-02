@@ -28,6 +28,7 @@ import("core.project.project")
 import("core.platform.platform")
 import("private.action.clean.remove_files")
 import("target.action.clean", {alias = "_do_clean_target"})
+import("private.service.remote_build.action", {alias = "remote_build_action"})
 
 -- on clean target
 function _on_clean_target(target)
@@ -56,11 +57,7 @@ function _clean_target(target)
     end
 
     -- enter the environments of the target packages
-    local oldenvs = {}
-    for name, values in pairs(target:pkgenvs()) do
-        oldenvs[name] = os.getenv(name)
-        os.addenv(name, unpack(values))
-    end
+    local oldenvs = os.addenvs(target:pkgenvs())
 
     -- the target scripts
     local scripts =
@@ -95,9 +92,7 @@ function _clean_target(target)
     end
 
     -- leave the environments of the target packages
-    for name, values in pairs(oldenvs) do
-        os.setenv(name, values)
-    end
+    os.setenvs(oldenvs)
 end
 
 -- clean the given targets
@@ -113,7 +108,6 @@ function _clean(targetname)
     -- clean the given target
     if targetname then
         local target = project.target(targetname)
-        _clean_targets(target:orderdeps())
         _clean_target(target)
     else
         _clean_targets(project.ordertargets())
@@ -156,19 +150,27 @@ function main()
         return _try_clean()
     end
 
+    -- do action for remote?
+    if remote_build_action.enabled() then
+        return remote_build_action()
+    end
+
     -- lock the whole project
     project.lock()
 
     -- get the target name
     local targetname = option.get("target")
 
-    -- config it first
-    task.run("config", {target = targetname, require = false, verbose = false})
+    -- local config first
+    config.load()
+
+    -- load targets
+    project.load_targets()
 
     -- enter project directory
     local oldir = os.cd(project.directory())
 
-    -- clean the current target
+    -- clean target
     _clean(targetname)
 
     -- unlock the whole project

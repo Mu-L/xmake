@@ -21,6 +21,7 @@
 -- imports
 import("core.base.option")
 import("private.action.clean.remove_files")
+import("private.cache.build_cache")
 
 -- the builtin clean main entry
 function main(target)
@@ -31,7 +32,19 @@ function main(target)
     end
 
     -- remove the target file
-    remove_files(target:targetfile())
+    local targetfile = target:targetfile()
+    remove_files(targetfile)
+
+    -- remove import library of the target file
+    -- @see https://github.com/xmake-io/xmake/issues/3052
+    if target:is_plat("windows") and target:is_shared() then
+        local expfile = path.join(path.directory(targetfile), path.basename(targetfile) .. ".exp")
+        local libfile = path.join(path.directory(targetfile), path.basename(targetfile) .. ".lib")
+        if os.isfile(expfile) then
+            remove_files(libfile)
+            remove_files(expfile)
+        end
+    end
 
     -- remove the symbol file
     remove_files(target:symbolfile())
@@ -40,18 +53,15 @@ function main(target)
     remove_files(target:pcoutputfile("c"))
     remove_files(target:pcoutputfile("cxx"))
 
-    -- TODO remove the header files (deprecated)
-    local _, dstheaders = target:headers()
-    remove_files(dstheaders)
-
     -- remove the clean files
     remove_files(target:get("cleanfiles"))
 
     -- remove all?
     if option.get("all") then
 
-        -- TODO remove the config.h file (deprecated)
-        remove_files(target:configheader())
+        -- remove config files
+        local _, configfiles = target:configfiles()
+        remove_files(configfiles)
 
         -- remove all dependent files for each platform
         remove_files(target:dependir({root = true}))
@@ -61,6 +71,9 @@ function main(target)
 
         -- remove all autogen files for each platform
         remove_files(target:autogendir({root = true}))
+
+        -- clean build cache
+        build_cache.clean()
     else
 
         -- remove dependent files for the current platform

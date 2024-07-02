@@ -1,25 +1,22 @@
 <div align="center">
   <a href="https://xmake.io/cn">
-    <img width="160" heigth="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+    <img width="160" height="160" src="https://tboox.org/static/img/xmake/logo256c.png">
   </a>
 
   <h1>xmake</h1>
 
   <div>
     <a href="https://github.com/xmake-io/xmake/actions?query=workflow%3AWindows">
-      <img src="https://img.shields.io/github/workflow/status/xmake-io/xmake/Windows/dev.svg?style=flat-square&logo=windows" alt="github-ci" />
+      <img src="https://img.shields.io/github/actions/workflow/status/xmake-io/xmake/windows.yml?branch=master&style=flat-square&logo=windows" alt="github-ci" />
     </a>
     <a href="https://github.com/xmake-io/xmake/actions?query=workflow%3ALinux">
-      <img src="https://img.shields.io/github/workflow/status/xmake-io/xmake/Linux/dev.svg?style=flat-square&logo=linux" alt="github-ci" />
+      <img src="https://img.shields.io/github/actions/workflow/status/xmake-io/xmake/linux.yml?branch=master&style=flat-square&logo=linux" alt="github-ci" />
     </a>
     <a href="https://github.com/xmake-io/xmake/actions?query=workflow%3AmacOS">
-      <img src="https://img.shields.io/github/workflow/status/xmake-io/xmake/macOS/dev.svg?style=flat-square&logo=apple" alt="github-ci" />
+      <img src="https://img.shields.io/github/actions/workflow/status/xmake-io/xmake/macos.yml?branch=master&style=flat-square&logo=apple" alt="github-ci" />
     </a>
     <a href="https://github.com/xmake-io/xmake/releases">
       <img src="https://img.shields.io/github/release/xmake-io/xmake.svg?style=flat-square" alt="Github All Releases" />
-    </a>
-    <a href="https://aur.archlinux.org/packages/xmake">
-      <img src="https://img.shields.io/aur/votes/xmake.svg?style=flat-square" alt="AUR votes" />
     </a>
   </div>
   <div>
@@ -28,9 +25,6 @@
     </a>
     <a href="https://www.reddit.com/r/xmake/">
       <img src="https://img.shields.io/badge/chat-on%20reddit-ff3f34.svg?style=flat-square" alt="Reddit" />
-    </a>
-    <a href="https://gitter.im/xmake-io/xmake?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge">
-      <img src="https://img.shields.io/gitter/room/xmake-io/xmake.svg?style=flat-square&colorB=96c312" alt="Gitter" />
     </a>
     <a href="https://t.me/tbooxorg">
       <img src="https://img.shields.io/badge/chat-on%20telegram-blue.svg?style=flat-square" alt="Telegram" />
@@ -52,23 +46,45 @@
 
 ## 项目支持
 
-通过成为赞助者来支持该项目。您的logo将显示在此处，并带有指向您网站的链接。🙏
-
-- [成为赞助商](https://xmake.io/#/zh-cn/about/sponsor)
+通过[成为赞助者](https://xmake.io/#/about/sponsor)来支持该项目。您的logo将显示在此处，并带有指向您网站的链接。🙏
 
 <a href="https://opencollective.com/xmake#sponsors" target="_blank"><img src="https://opencollective.com/xmake/sponsors.svg?width=890"></a>
+<a href="https://opencollective.com/xmake#backers" target="_blank"><img src="https://opencollective.com/xmake/backers.svg?width=600"></a>
+
+## 技术支持
+
+你也可以考虑通过 [Github 的赞助计划](https://github.com/sponsors/waruqi) 赞助我们来获取额外的技术支持服务，然后你就能获取 [xmake-io/technical-support](https://github.com/xmake-io/technical-support) 仓库的访问权限，获取更多技术咨询相关的信息。
+
+- [x] 更高优先级的 Issues 问题处理
+- [x] 一对一技术咨询服务
+- [x] Review xmake.lua 并提供改进建议
 
 ## 简介
 
-xmake 是一个基于 Lua 的轻量级跨平台构建工具，使用 xmake.lua 维护项目构建，相比 makefile/CMakeLists.txt，配置语法更加简洁直观，对新手非常友好，短时间内就能快速入门，能够让用户把更多的精力集中在实际的项目开发上。
+Xmake 是一个基于 Lua 的轻量级跨平台构建工具。
 
-虽然，简单易用是 xmake 的一大特色，但 xmake 的功能也是非常强大的，既能够像 Make/Ninja 那样可以直接编译项目，也可以像 CMake/Meson 那样生成工程文件，还有内置的包管理系统来帮助用户解决 C/C++依赖库的集成使用问题。
+它非常的轻量，没有任何依赖，因为它内置了 Lua 运行时。
 
-目前，xmake主要用于C/C++项目的构建，但是同时也支持其他native语言的构建，可以实现跟C/C++进行混合编译，同时编译速度也是非常的快，可以跟Ninja持平。
+它使用 xmake.lua 维护项目构建，相比 makefile/CMakeLists.txt，配置语法更加简洁直观，对新手非常友好，短时间内就能快速入门，能够让用户把更多的精力集中在实际的项目开发上。
+
+我们能够使用它像 Make/Ninja 那样可以直接编译项目，也可以像 CMake/Meson 那样生成工程文件，另外它还有内置的包管理系统来帮助用户解决 C/C++ 依赖库的集成使用问题。
+
+目前，Xmake 主要用于 C/C++ 项目的构建，但是同时也支持其他 native 语言的构建，可以实现跟 C/C++ 进行混合编译，同时编译速度也是非常的快，可以跟 Ninja 持平。
+
+```
+Xmake = Build backend + Project Generator + Package Manager + [Remote|Distributed] Build + Cache
+```
+
+尽管不是很准确，但我们还是可以把 Xmake 按下面的方式来理解：
+
+```
+Xmake ≈ Make/Ninja + CMake/Meson + Vcpkg/Conan + distcc + ccache/sccache
+```
+
 
 如果你想要了解更多，请参考：[在线文档](https://xmake.io/#/zh-cn/getting_started), [Github](https://github.com/xmake-io/xmake)以及[Gitee](https://gitee.com/tboox/xmake)，同时也欢迎加入我们的 [社区](https://xmake.io/#/zh-ch/about/contact).
 
-![](https://xmake.io/assets/img/index/xmake-basic-render.gif)
+![](https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/xmake-basic-render.gif)
 
 ## 课程
 
@@ -81,13 +97,13 @@ xmake 官方也推出了一些入门课程，带你一步步快速上手 xmake�
 #### 使用curl
 
 ```bash
-bash <(curl -fsSL https://xmake.io/shget.text)
+curl -fsSL https://xmake.io/shget.text | bash
 ```
 
 #### 使用wget
 
 ```bash
-bash <(wget https://xmake.io/shget.text -O -)
+wget https://xmake.io/shget.text -O - | bash
 ```
 
 #### 使用powershell
@@ -96,42 +112,69 @@ bash <(wget https://xmake.io/shget.text -O -)
 Invoke-Expression (Invoke-Webrequest 'https://xmake.io/psget.text' -UseBasicParsing).Content
 ```
 
+#### 其他安装方式
+
+如果不想使用脚本安装，也可以点击查看 [安装文档](https://xmake.io/#/zh-cn/guide/installation)，了解其他安装方法。
+
 ## 简单的工程描述
 
-<img src="https://xmake.io/assets/img/index/showcode1.png" width="340px" />
+```lua
+target("hello")
+    set_kind("binary")
+    add_files("src/*.cpp")
+```
 
 ## 包依赖描述
 
-<img src="https://xmake.io/assets/img/index/add_require.png" width="600px" />
+```lua
+add_requires("tbox 1.6.*", "zlib", "libpng ~1.6")
+```
 
 官方的xmake包管理仓库: [xmake-repo](https://github.com/xmake-io/xmake-repo)
 
-## 构建工程
+<img src="https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/package.gif" width="650px" />
+
+## 命令行使用
+
+### 创建工程
+
+```bash
+$ xmake create hello
+$ cd hello
+```
+
+### 构建工程
 
 ```bash
 $ xmake
 ```
 
-## 运行目标
+### 运行目标
 
 ```bash
 $ xmake run console
 ```
 
-## 调试程序
+### 调试程序
 
 ```bash
 $ xmake run -d console
 ```
 
-## 配置平台
+### 运行测试
+
+```bash
+$ xmake test
+```
+
+### 配置平台
 
 ```bash
 $ xmake f -p [windows|linux|macosx|android|iphoneos ..] -a [x86|arm64 ..] -m [debug|release]
 $ xmake
 ```
 
-## 图形化菜单配置
+### 图形化菜单配置
 
 ```bash
 $ xmake f --menu
@@ -164,10 +207,6 @@ $ xmake f --menu
 
 ## 包依赖管理
 
-### 下载和编译
-
-<img src="https://xmake.io/assets/img/index/package_manage.png" width="650px" />
-
 ### 架构和流程
 
 <img src="https://xmake.io/assets/img/index/package_arch.png" width="650px" />
@@ -178,25 +217,45 @@ $ xmake f --menu
 * 官方包管理器 [Xrepo](https://github.com/xmake-io/xrepo)
 * [用户自建仓库](https://xmake.io/#/zh-cn/package/remote_package?id=%e4%bd%bf%e7%94%a8%e8%87%aa%e5%bb%ba%e7%a7%81%e6%9c%89%e5%8c%85%e4%bb%93%e5%ba%93)
 * Conan (conan::openssl/1.1.1g)
-* Vcpkg (vcpkg:ffmpeg)
+* Conda (conda::libpng 1.3.67)
+* Vcpkg (vcpkg::ffmpeg)
 * Homebrew/Linuxbrew (brew::pcre2/libpcre2-8)
 * Pacman on archlinux/msys2 (pacman::libcurl)
+* Apt on ubuntu/debian (apt::zlib1g-dev)
 * Clib (clib::clibs/bytes@0.0.4)
 * Dub (dub::log 0.4.3)
+* Portage on Gentoo/Linux (portage::libhandy)
+* Nimble for nimlang (nimble::zip >1.3)
+* Cargo for rust (cargo::base64 0.13.0)
+
+### 包管理特性
+
+* 官方仓库提供近 800+ 常用包，真正做到全平台一键下载集成编译
+* 全平台包支持，支持交叉编译的依赖包集成
+* 支持包虚拟环境管理和加载，`xrepo env shell`
+* Windows 云端预编译包加速
+* 支持自建包仓库，私有仓库部署
+* 第三方包仓库支持，提供更加丰富的包源，例如：vcpkg, conan, conda 等等
+* 支持自动拉取使用云端工具链
+* 支持包依赖锁定
 
 ## 支持平台
 
-* Windows (x86, x64)
+* Windows (x86, x64, arm64)
 * macOS (i386, x86_64, arm64)
-* Linux (i386, x86_64, cross-toolchains ..)
+* Linux (i386, x86_64, arm, arm64, riscv, mips, 390x, sh4 ...)
 * *BSD (i386, x86_64)
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
 * WatchOS (armv7k, i386)
+* AppleTVOS (armv7, arm64, i386, x86_64)
+* AppleXROS (arm64, x86_64)
 * MSYS (i386, x86_64)
 * MinGW (i386, x86_64, arm, arm64)
 * Cygwin (i386, x86_64)
-* Wasm (wasm32)
+* Wasm (wasm32, wasm64)
+* Haiku (i386, x86_64)
+* Harmony (x86_64, armeabi-v7a, arm64-v8a)
 * Cross (cross-toolchains ..)
 
 ## 支持工具链
@@ -204,17 +263,22 @@ $ xmake f --menu
 ```bash
 $ xmake show -l toolchains
 xcode         Xcode IDE
-vs            VisualStudio IDE
+msvc          Microsoft Visual C/C++ Compiler
+clang-cl      LLVM Clang C/C++ Compiler compatible with msvc
 yasm          The Yasm Modular Assembler
 clang         A C language family frontend for LLVM
 go            Go Programming Language Compiler
-dlang         D Programming Language Compiler
+dlang         D Programming Language Compiler (Auto)
+dmd           D Programming Language Compiler
+ldc           The LLVM-based D Compiler
+gdc           The GNU D Compiler (GDC)
 gfortran      GNU Fortran Programming Language Compiler
 zig           Zig Programming Language Compiler
 sdcc          Small Device C Compiler
-cuda          CUDA Toolkit
+cuda          CUDA Toolkit (nvcc, nvc, nvc++, nvfortran)
 ndk           Android NDK
 rust          Rust Programming Language Compiler
+swift         Swift Programming Language Compiler
 llvm          A collection of modular and reusable compiler and toolchain technologies
 cross         Common cross compilation toolchain
 nasm          NASM Assembler
@@ -227,7 +291,21 @@ tinycc        Tiny C Compiler
 emcc          A toolchain for compiling to asm.js and WebAssembly
 icc           Intel C/C++ Compiler
 ifort         Intel Fortran Compiler
-muslcc        The musl-based cross-compilation toolchains
+muslcc        The musl-based cross-compilation toolchain
+fpc           Free Pascal Programming Language Compiler
+wasi          WASI-enabled WebAssembly C/C++ toolchain
+nim           Nim Programming Language Compiler
+circle        A new C++20 compiler
+armcc         ARM Compiler Version 5 of Keil MDK
+armclang      ARM Compiler Version 6 of Keil MDK
+c51           Keil development tools for the 8051 Microcontroller Architecture
+icx           Intel LLVM C/C++ Compiler
+dpcpp         Intel LLVM C++ Compiler for data parallel programming model based on Khronos SYCL
+masm32        The MASM32 SDK
+iverilog      Icarus Verilog
+verilator     Verilator open-source SystemVerilog simulator and lint system
+cosmocc       build-once run-anywhere
+hdk           Harmony SDK
 ```
 
 ## 支持语言
@@ -242,41 +320,78 @@ muslcc        The musl-based cross-compilation toolchains
 * Fortran
 * Cuda
 * Zig
+* Vala
+* Pascal
+* Nim
+* Verilog
+* FASM
+* NASM
+* YASM
+* MASM32
+* Cppfront
 
 ## 支持特性
 
-* 简洁的配置语法
-* 直接构建支持，不依赖任何第三方后端 make 工具
-* 跨平台支持，不同平台可方便快速地切换
-* 交叉编译支持，智能分析交叉工具链信息
-* 多任务并行编译支持
-* C++20 Module-TS 支持
-* 支持跨平台的 C/C++ 依赖包快速集成
-* 自建分布式包仓库，第三方包仓库支持
+* 语法简单易上手
+* 快速安装，无任何依赖
+* 全平台一键编译
+* 支持交叉编译，智能分析交叉工具链信息
+* 极速，多任务并行编译支持
+* C++20 Module 支持
+* 支持跨平台的 C/C++ 依赖包快速集成，内置包管理器
 * 多语言混合编译支持
-* 灵活的 lua 脚本，丰富的扩展模块，可实现高度定制化
-* 丰富的插件支持，内置 vs/cmake/makefile/compile_commands 等生成插件
+* 丰富的插件支持，提供各种工程生成器，例如：vs/makefile/cmakelists/compile_commands 生成插件
 * REPL 交互式执行支持
 * 增量编译支持，头文件依赖自动分析
 * 工具链的快速切换、定制化支持
-* 自动拉取工具链以及依赖包的快速整合
+* 丰富的扩展模块支持
+* 远程编译支持
+* 分布式编译支持
+* 内置的本地和远程编译缓存支持
 
 ## 工程类型
 
 * 静态库程序
 * 动态库类型
 * 控制台程序
-* Cuda程序
-* Qt应用程序
-* WDK驱动程序
-* WinSDK应用程序
-* MFC应用程序
-* iOS/MacOS应用程序
+* Cuda 程序
+* Qt 应用程序
+* WDK Windows 驱动程序
+* WinSDK 应用程序
+* MFC 应用程序
+* iOS/MacOS 应用程序（支持.metal）
 * Framework和Bundle程序（iOS/MacOS）
+* SWIG/Pybind11 模块 (Lua, python, ...)
+* Luarocks 模块
+* Protobuf 程序
+* Lex/yacc 程序
+* C++20 模块
+* Linux 内核驱动模块
+* Keil MDK/C51 嵌入式程序
+* Verilog 仿真程序
+
+## 分布式编译和缓存
+
+- [x] 跨平台支持
+- [x] 支持 msvc, clang, gcc 和交叉编译工具链
+- [x] 支持构建 android, ios, linux, win, macOS 程序
+- [x] 除了编译工具链，无任何其他依赖
+- [x] 支持编译服务器负载均衡调度
+- [x] 支持大文件实时压缩传输 (lz4)
+- [x] 几乎零配置成本，无需共享文件系统，更加方便和安全
+
+关于分布式编译和缓存，可以见下面的文档。
+
+- [分布式编译](https://xmake.io/#/zh-cn/features/distcc_build)
+- [编译缓存](https://xmake.io/#/zh-cn/features/build_cache)
+
+## 远程编译
+
+更多详情见：[远程编译](https://xmake.io/#/zh-cn/features/remote_build)
 
 ## 更多例子
 
-#### Debug 和 Release模式
+#### Debug 和 Release 模式
 
 ```lua
 add_rules("mode.debug", "mode.release")
@@ -385,7 +500,7 @@ target("loop")
 ```lua
 target("test")
     set_kind("binary")
-    add_files("src/*.zig")
+    add_files("src/main.zig")
 ```
 
 ### 自动拉取远程工具链
@@ -398,7 +513,7 @@ target("test")
 add_requires("llvm 10.x", {alias = "llvm-10"})
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("llvm@llvm-10")
 ````
 
@@ -410,7 +525,7 @@ target("test")
 add_requires("muslcc")
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("@muslcc")
 ```
 
@@ -432,11 +547,11 @@ target("test")
 
 ## 插件
 
-#### 生成IDE工程文件插件（makefile, vs2002 - vs2019, ...）
+#### 生成IDE工程文件插件（makefile, vs2002 - vs2022, ...）
 
 ```bash
-$ xmake project -k vsxmake -m "debug;release" # 新版vs工程生成插件（推荐）
-$ xmake project -k vs -m "debug;release"
+$ xmake project -k vsxmake -m "debug,release" # 新版vs工程生成插件（推荐）
+$ xmake project -k vs -m "debug,release"
 $ xmake project -k cmake
 $ xmake project -k ninja
 $ xmake project -k compile_commands
@@ -478,13 +593,17 @@ $ xmake l
 
 * [xmake.vim](https://github.com/luzhlon/xmake.vim) (third-party, thanks [@luzhlon](https://github.com/luzhlon))
 
+* [xmake-visualstudio](https://github.com/HelloWorld886/xmake-visualstudio) (third-party, thanks [@HelloWorld886](https://github.com/HelloWorld886))
+
+* [xmake-qtcreator](https://github.com/Arthapz/xmake-project-manager) (third-party, thanks [@Arthapz](https://github.com/Arthapz))
+
 ### XMake Gradle插件 (JNI)
 
 我们也可以在Gradle中使用[xmake-gradle](https://github.com/xmake-io/xmake-gradle)插件来集成编译JNI库
 
 ```
 plugins {
-  id 'org.tboox.gradle-xmake-plugin' version '1.0.6'
+  id 'org.tboox.gradle-xmake-plugin' version '1.1.5'
 }
 
 android {
@@ -519,22 +638,25 @@ $ ./gradlew app:assembleDebug
 > Task :app:assembleDebug
 ```
 
-## 技术支持
+## CI 集成
 
-我们也提供付费的技术支持来为帮助用户快速解决相关问题，具体详情请点击下面的图片链接：
+### GitHub Action
 
-<a href="https://xscode.com/waruqi/xmake">
-<img src="https://tboox.org/assets/img/xmake-xscode.png" width="650px" />
-</a>
+我们可以使用 [github-action-setup-xmake](https://github.com/xmake-io/github-action-setup-xmake) 在 Github Action 上实现跨平台安装集成 Xmake。
 
-或者你也可以考虑赞助我们也获取技术支持服务，[[成为赞助商](https://xmake.io/#/zh-cn/about/sponsor)]
+```
+uses: xmake-io/github-action-setup-xmake@v1
+with:
+  xmake-version: latest
+```
 
-## 项目例子
+## 谁在使用 Xmake?
 
-一些使用xmake的项目：
+请点击 [用户列表](https://xmake.io/#/zh-cn/about/who_is_using_xmake) 查看完整用户使用列表。
 
-* [tbox](https://github.com/tboox/tbox)
-* [更多](https://github.com/xmake-io/awesome-xmake)
+如果您在使用 xmake，也欢迎通过 PR 将信息提交至上面的列表，让更多的用户了解有多少用户在使用 xmake，也能让用户更加安心使用 xmake。
+
+我们也会有更多的动力去持续投入，让 xmake 项目和社区更加繁荣。
 
 ## 联系方式
 
@@ -543,7 +665,6 @@ $ ./gradlew app:assembleDebug
 * 社区
   - [Reddit论坛](https://www.reddit.com/r/xmake/)
   - [Telegram群组](https://t.me/tbooxorg)
-  - [Gitter聊天室](https://gitter.im/xmake-io/xmake?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
   - [Discord聊天室](https://discord.gg/xmake)
   - QQ群：343118190, 662147501
 * 源码：[Github](https://github.com/xmake-io/xmake), [Gitee](https://gitee.com/tboox/xmake)
@@ -554,7 +675,8 @@ $ ./gradlew app:assembleDebug
 感谢所有对xmake有所[贡献](CONTRIBUTING.md)的人:
 <a href="https://github.com/xmake-io/xmake/graphs/contributors"><img src="https://opencollective.com/xmake/contributors.svg?width=890&button=false" /></a>
 
-* [TitanSnow](https://github.com/TitanSnow): 提供xmake [logo](https://github.com/TitanSnow/ts-xmake-logo) 和安装脚本
-* [uael](https://github.com/uael): 提供语义版本跨平台c库 [sv](https://github.com/uael/sv)
-* [OpportunityLiu](https://github.com/OpportunityLiu): 改进cuda构建, tests框架和ci
+* [TitanSnow](https://github.com/TitanSnow): 提供xmake [logo](https://github.com/TitanSnow/ts-xmake-logo) 和安装脚本。
+* [uael](https://github.com/uael): 提供语义版本跨平台c库 [sv](https://github.com/uael/sv)。
+* [OpportunityLiu](https://github.com/OpportunityLiu): 改进cuda构建, tests框架和ci。
+* [xq144](https://github.com/xq114): 改进 `xrepo env shell`，并贡献大量包到 [xmake-repo](https://github.com/xmake-io/xmake-repo) 仓库。
 

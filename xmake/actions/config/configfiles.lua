@@ -22,13 +22,15 @@
 import("core.base.option")
 import("core.base.semver")
 import("core.project.config")
+import("core.project.depend")
 import("core.project.project")
 import("core.platform.platform")
+import("lib.detect.find_tool")
 
 -- get all configuration files
 function _get_configfiles()
     local configfiles = {}
-    for _, target in pairs(project.targets()) do
+    for _, target in table.orderpairs(project.targets()) do
         if target:is_enabled() then
 
             -- get configuration files for target
@@ -53,6 +55,19 @@ function _get_configfiles()
                     srcinfo.srcfile  = srcfile
                     srcinfo.fileinfo = fileinfo
                 end
+
+                -- we use first target to get dependfile path
+                -- @see https://github.com/xmake-io/xmake/issues/3321
+                if not srcinfo.dependfile then
+                    srcinfo.dependfile = target:dependfile(srcfile)
+                end
+
+                -- always update?
+                local always_update = target:policy("build.always_update_configfiles")
+                if always_update == nil then
+                    always_update = project.policy("build.always_update_configfiles")
+                end
+                srcinfo.always_update = always_update
 
                 -- save targets
                 srcinfo.targets = srcinfo.targets or {}
@@ -86,6 +101,34 @@ function _get_builtinvars_target(target)
     return builtinvars
 end
 
+-- get the git builtin variables
+function _get_builtinvars_git(builtinvars)
+    local cmds =
+    {
+        GIT_TAG         = {"describe", "--tags"},
+        GIT_TAG_LONG    = {"describe", "--tags", "--long"},
+        GIT_BRANCH      = {"rev-parse", "--abbrev-ref", "HEAD"},
+        GIT_COMMIT      = {"rev-parse", "--short", "HEAD"},
+        GIT_COMMIT_LONG = {"rev-parse", "HEAD"},
+        GIT_COMMIT_DATE = {"log", "-1", "--date=format:%Y%m%d%H%M%S", "--format=%ad"}
+    }
+    for name, argv in pairs(cmds) do
+        builtinvars[name] = function ()
+            local result
+            local git = find_tool("git")
+            if git then
+                result = try {function ()
+                    return os.iorunv(git.program, argv)
+                end}
+            end
+            if not result then
+                result = "none"
+            end
+            return result:trim()
+        end
+    end
+end
+
 -- get the global builtin variables
 function _get_builtinvars_global()
     local builtinvars = _g.builtinvars_global
@@ -104,6 +147,7 @@ function _get_builtinvars_global()
             builtinvars_upper[name:upper()] = type(value) == "string" and value:upper() or value
         end
         table.join2(builtinvars, builtinvars_upper)
+        _get_builtinvars_git(builtinvars)
         _g.builtinvars_global = builtinvars
     end
     return builtinvars
@@ -137,7 +181,9 @@ function _generate_configfile(srcfile, dstfile, fileinfo, targets)
             -- get variables from the target
             for name, value in pairs(target:get("configvar")) do
                 if variables[name] == nil then
-                    variables[name] = table.unwrap(value)
+                    value = table.unwrap(value)
+                    variables[name] = value
+                    variables["__extraconf_" .. name] = target:extraconf("configvar." .. name, value)
                 end
             end
 
@@ -146,21 +192,16 @@ function _generate_configfile(srcfile, dstfile, fileinfo, targets)
                 for name, value in pairs(opt:get("configvar")) do
                     if variables[name] == nil then
                         variables[name] = table.unwrap(value)
-                    end
-                end
-            end
-
-            -- get variables from the target.packages
-            for _, pkg in ipairs(target:orderpkgs()) do
-                for name, value in pairs(pkg:get("configvar")) do
-                    if variables[name] == nil then
-                        variables[name] = table.unwrap(value)
+                        variables["__extraconf_" .. name] = opt:extraconf("configvar." .. name, value)
                     end
                 end
             end
 
             -- get the builtin variables from the target
             for name, value in pairs(_get_builtinvars_target(target)) do
+                if type(value) == "function" then
+                    value = value()
+                end
                 if variables[name] == nil then
                     variables[name] = value
                 end
@@ -168,13 +209,16 @@ function _generate_configfile(srcfile, dstfile, fileinfo, targets)
         end
         -- get the global builtin variables
         for name, value in pairs(_get_builtinvars_global()) do
+            if type(value) == "function" then
+                value = value()
+            end
             if variables[name] == nil then
                 variables[name] = value
             end
         end
 
         -- replace all variables
-        local pattern = fileinfo.pattern or "%${(.-)}"
+        local pattern = fileinfo.pattern or "%${([^\n]-)}"
         io.gsub(dstfile_tmp, "(" .. pattern .. ")", function(_, variable)
 
             -- get variable name
@@ -200,6 +244,7 @@ function _generate_configfile(srcfile, dstfile, fileinfo, targets)
 
             -- get variable value
             local value = variables[variable]
+            local extraconf = variables["__extraconf_" .. variable]
             if isdefine then
                 if value == nil then
                     value = ("/* #undef %s */"):format(variable)
@@ -212,7 +257,26 @@ function _generate_configfile(srcfile, dstfile, fileinfo, targets)
                 elseif type(value) == "number" then
                     value = ("#define %s %d"):format(variable, value)
                 elseif type(value) == "string" then
-                    value = ("#define %s \"%s\""):format(variable, value)
+                    local quote = true
+                    local escape = false
+                    if extraconf then
+                        -- disable to wrap quote, @see https://github.com/xmake-io/xmake/issues/1694
+                        if extraconf.quote == false then
+                            quote = false
+                        end
+                        -- escape path seperator when with quote, @see https://github.com/xmake-io/xmake/issues/1872
+                        if quote and extraconf.escape then
+                            escape = true
+                        end
+                    end
+                    if quote then
+                        if escape then
+                            value = value:gsub("\\", "\\\\")
+                        end
+                        value = ("#define %s \"%s\""):format(variable, value)
+                    else
+                        value = ("#define %s %s"):format(variable, value)
+                    end
                 else
                     raise("unknown variable(%s) type: %s", variable, type(value))
                 end
@@ -238,6 +302,12 @@ function _generate_configfile(srcfile, dstfile, fileinfo, targets)
                 if io.readfile(dstfile_tmp) ~= io.readfile(dstfile) then
                     os.cp(dstfile_tmp, dstfile)
                     generated = true
+                else
+                    -- I forget why I added it here, but if we switch the option, mode,
+                    -- this will cause the whole project to be rebuilt,
+                    -- even if nothing in config.h has been changed.
+                    --
+                    --os.touch(dstfile, {mtime = os.time()})
                 end
             else
                 os.cp(dstfile_tmp, dstfile)
@@ -251,17 +321,22 @@ function _generate_configfile(srcfile, dstfile, fileinfo, targets)
 end
 
 -- the main entry function
-function main()
+function main(opt)
 
     -- enter project directory
+    opt = opt or {}
     local oldir = os.cd(project.directory())
 
-    -- get all configuration files
-    local configfiles = _get_configfiles()
 
     -- generate all configuration files
+    local configfiles = _get_configfiles()
     for dstfile, srcinfo in pairs(configfiles) do
-        _generate_configfile(srcinfo.srcfile, dstfile, srcinfo.fileinfo, srcinfo.targets)
+        depend.on_changed(function ()
+            _generate_configfile(srcinfo.srcfile, dstfile, srcinfo.fileinfo, srcinfo.targets)
+        end, {files = srcinfo.srcfile,
+              lastmtime = os.mtime(dstfile),
+              dependfile = srcinfo.dependfile,
+              changed = opt.force or srcinfo.always_update})
     end
 
     -- leave project directory

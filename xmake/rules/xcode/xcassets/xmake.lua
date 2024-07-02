@@ -32,7 +32,7 @@ rule("xcode.xcassets")
         import("core.theme.theme")
         import("core.project.depend")
         import("core.tool.toolchain")
-        import("private.utils.progress")
+        import("utils.progress")
 
         -- get xcode sdk directory
         local xcode_sdkdir = assert(get_config("xcode"), "xcode not found!")
@@ -43,7 +43,7 @@ rule("xcode.xcassets")
 
         -- need re-compile it?
         local dependfile = target:dependfile(sourcefile)
-        local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+        local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile) or {})
         if not depend.is_changed(dependinfo, {lastmtime = os.mtime(dependfile)}) then
             return
         end

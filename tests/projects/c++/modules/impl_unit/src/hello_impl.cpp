@@ -1,7 +1,7 @@
-// module;
+module;
 #include <iostream>
-module hello;
 
+module hello;
 using namespace std;
 
 namespace hello {

@@ -22,15 +22,28 @@
 import("core.base.option")
 import("core.project.config")
 import("detect.sdks.find_xcode")
+import("private.utils.executable_path")
 
 -- main entry
 function main(toolchain)
+
+    -- get apple device
+    local simulator
+    local appledev = toolchain:config("appledev") or config.get("appledev")
+    if appledev and appledev == "simulator" then
+        simulator = true
+        appledev = "simulator"
+    elseif not toolchain:is_plat("macosx") and toolchain:is_arch("i386", "x86_64") then
+        simulator = true
+        appledev = "simulator"
+    end
 
     -- find xcode
     local xcode_sdkver = toolchain:config("xcode_sdkver") or config.get("xcode_sdkver")
     local xcode = find_xcode(config.get("xcode"), {force = true, verbose = true,
                                                    find_codesign = toolchain:is_global(),
                                                    sdkver = xcode_sdkver,
+                                                   appledev = appledev,
                                                    plat = toolchain:plat(),
                                                    arch = toolchain:arch()})
     if not xcode then
@@ -59,6 +72,62 @@ function main(toolchain)
         end
     end
 
+    -- get xcode bin directory
+    local cross
+    if xcode.sdkdir and os.isdir(xcode.sdkdir) then
+        local bindir = path.join(xcode.sdkdir, "Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin")
+        toolchain:config_set("bindir", bindir)
+    else
+        if toolchain:is_plat("macosx") then
+            cross = "xcrun -sdk macosx "
+        elseif toolchain:is_plat("iphoneos") then
+            cross = simulator and "xcrun -sdk iphonesimulator " or "xcrun -sdk iphoneos "
+        elseif toolchain:is_plat("watchos") then
+            cross = simulator and "xcrun -sdk watchsimulator " or "xcrun -sdk watchos "
+        elseif toolchain:is_plat("appletvos") then
+            cross = simulator and "xcrun -sdk appletvsimulator " or "xcrun -sdk appletvos "
+        elseif toolchain:is_plat("applexros") then
+            cross = simulator and "xcrun -sdk xrsimulator " or "xcrun -sdk xros "
+        else
+            raise("unknown platform for xcode!")
+        end
+        local xc_clang = executable_path(cross .. "clang")
+        if xc_clang then
+            toolchain:config_set("bindir", path.directory(xc_clang))
+        end
+    end
+
+    -- save xcode sysroot directory
+    local xcode_sysroot
+    if xcode.sdkdir and xcode_sdkver then
+        if toolchain:is_plat("macosx") then
+            xcode_sysroot = xcode.sdkdir .. "/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX" .. xcode_sdkver .. ".sdk"
+        elseif toolchain:is_plat("iphoneos") then
+            local platname = simulator and "iPhoneSimulator" or "iPhoneOS"
+            xcode_sysroot  = format("%s/Contents/Developer/Platforms/%s.platform/Developer/SDKs/%s%s.sdk", xcode.sdkdir, platname, platname, xcode_sdkver)
+        elseif toolchain:is_plat("watchos") then
+            local platname = simulator and "WatchSimulator" or "WatchOS"
+            xcode_sysroot  = format("%s/Contents/Developer/Platforms/%s.platform/Developer/SDKs/%s%s.sdk", xcode.sdkdir, platname, platname, xcode_sdkver)
+        elseif toolchain:is_plat("appletvos") then
+            local platname = simulator and "AppleTVSimulator" or "AppleTVOS"
+            xcode_sysroot  = format("%s/Contents/Developer/Platforms/%s.platform/Developer/SDKs/%s%s.sdk", xcode.sdkdir, platname, platname, xcode_sdkver)
+        elseif toolchain:is_plat("applexros") then
+            local platname = simulator and "XRSimulator" or "XROS"
+            xcode_sysroot  = format("%s/Contents/Developer/Platforms/%s.platform/Developer/SDKs/%s%s.sdk", xcode.sdkdir, platname, platname, xcode_sdkver)
+        end
+    else
+        -- maybe it is from CommandLineTools, e.g. /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+        -- @see https://github.com/xmake-io/xmake/issues/3686
+        local sdkpath = try { function () return os.iorun(cross .. "--show-sdk-path") end }
+        if sdkpath then
+            xcode_sysroot = sdkpath:trim()
+        end
+    end
+    if xcode_sysroot then
+        toolchain:config_set("xcode_sysroot", xcode_sysroot)
+    end
+    toolchain:config_set("simulator", simulator)
+
     -- save target minver
     --
     -- @note we need to differentiate the version for the system,
@@ -71,19 +140,18 @@ function main(toolchain)
     --
     local target_minver = toolchain:config("target_minver") or config.get("target_minver")
     if xcode_sdkver and not target_minver then
-        target_minver = xcode_sdkver
-        if toolchain:is_plat("macosx") then
-            local macos_ver = macos.version()
-            if macos_ver then
-                target_minver = macos_ver:major() .. "." .. macos_ver:minor()
-            end
-        end
+        target_minver = xcode.target_minver
     end
     toolchain:config_set("xcode", xcode.sdkdir)
     toolchain:config_set("xcode_sdkver", xcode_sdkver)
     toolchain:config_set("target_minver", target_minver)
+    toolchain:config_set("appledev", appledev)
     toolchain:configs_save()
-    cprint("checking for SDK version of Xcode for %s (%s) ... ${color.success}%s", toolchain:plat(), toolchain:arch(), xcode_sdkver)
-    cprint("checking for Minimal target version of Xcode for %s (%s) ... ${color.success}%s", toolchain:plat(), toolchain:arch(), target_minver)
+    if xcode_sdkver then
+        cprint("checking for SDK version of Xcode for %s (%s) ... ${color.success}%s", toolchain:plat(), toolchain:arch(), xcode_sdkver)
+    end
+    if target_minver then
+        cprint("checking for Minimal target version of Xcode for %s (%s) ... ${color.success}%s", toolchain:plat(), toolchain:arch(), target_minver)
+    end
     return true
 end

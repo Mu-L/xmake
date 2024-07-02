@@ -19,6 +19,7 @@
 --
 
 -- imports
+import("core.base.option")
 import("core.base.hashset")
 import("vstudio.impl.vsinfo", { rootdir = path.directory(os.scriptdir()) })
 import("render")
@@ -26,7 +27,7 @@ import("getinfo")
 import("core.project.config")
 import("core.cache.localcache")
 
-local template_root = path.join(os.scriptdir(), "vsproj", "templates")
+local template_root = path.join(os.programdir(), "scripts", "vsxmake", "vsproj", "templates")
 local template_sln = path.join(template_root, "sln", "vsxmake.sln")
 local template_vcx = path.join(template_root, "vcxproj", "#target#.vcxproj")
 
@@ -46,6 +47,7 @@ function _filter_files(files, includeexts, excludeexts)
             table.insert(f, file)
         end
     end
+    table.sort(f)
     return f
 end
 
@@ -122,6 +124,9 @@ function _buildparams(info, target, default)
         elseif args.filecxx then
             local files = info._targets[target].sourcefiles
             table.insert(r, _filter_files(files, {".cpp", ".cc", ".cxx"}))
+        elseif args.filempp then
+            local files = info._targets[target].sourcefiles
+            table.insert(r, _filter_files(files, {".mpp", ".mxx", ".cppm", ".ixx"}))
         elseif args.filecu then
             local files = info._targets[target].sourcefiles
             table.insert(r, _filter_files(files, {".cu"}))
@@ -134,11 +139,17 @@ function _buildparams(info, target, default)
         elseif args.fileui then -- for qt/.ui
             local files = info._targets[target].sourcefiles
             table.insert(r, _filter_files(files, {".ui"}))
+        elseif args.fileqrc then -- for qt/.qrc
+            local files = info._targets[target].sourcefiles
+            table.insert(r, _filter_files(files, {".qrc"}))
+        elseif args.filets then -- for qt/.ts
+            local files = info._targets[target].sourcefiles
+            table.insert(r, _filter_files(files, {".ts"}))
         elseif args.incc then
-            local files = info._targets[target].headerfiles
+            local files = table.join(info._targets[target].headerfiles or {}, info._targets[target].extrafiles)
             table.insert(r, _filter_files(files, nil, {".natvis"}))
         elseif args.incnatvis then
-            local files = info._targets[target].headerfiles
+            local files = table.join(info._targets[target].headerfiles or {}, info._targets[target].extrafiles)
             table.insert(r, _filter_files(files, {".natvis"}))
         end
         return r
@@ -167,17 +178,31 @@ function _writefileifneeded(file, content)
         dprint("skipped file %s since the file has the same content", path.relative(file))
         return
     end
-    io.writefile(file, content)
+    -- we need utf8 with bom encoding for unicode
+    -- @see https://github.com/xmake-io/xmake/issues/1689
+    io.writefile(file, content, {encoding = "utf8bom"})
 end
 
-function _clear_cacheconf()
-    config.clear()
-    config.save()
-    localcache.clear("config")
+-- save plugin arguments for `plugin.vsxmake.autoupdate`
+-- @see https://github.com/xmake-io/xmake/issues/1895
+function _save_plugin_arguments()
+    local vsxmake_cache = localcache.cache("vsxmake")
+    for _, name in ipairs({"kind", "modes", "archs", "outputdir"}) do
+        vsxmake_cache:set(name, option.get(name))
+    end
+    vsxmake_cache:save()
+end
+
+-- clear cache
+function _clear_cache()
     localcache.clear("detect")
     localcache.clear("option")
     localcache.clear("package")
     localcache.clear("toolchain")
+
+    -- force recheck
+    localcache.set("config", "recheck", true)
+
     localcache.save()
 end
 
@@ -188,7 +213,7 @@ function make(version)
         version = tonumber(config.get("vs"))
         if not version then
             return function(outputdir)
-                raise("invalid vs version, run `xmake f --vs=201x`")
+                raise("invalid vs version, run `xmake f --vs=20xx`")
             end
         end
     end
@@ -207,7 +232,7 @@ function make(version)
 
         -- write solution file
         local sln = path.join(info.solution_dir, info.slnfile .. ".sln")
-        _writefileifneeded(sln, render(template_sln, "#([A-Za-z0-9_,%.%*%(%)]+)#", paramsprovidersln))
+        _writefileifneeded(sln, render(template_sln, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidersln))
 
         -- add solution custom file
         _trycp(template_props, info.solution_dir)
@@ -219,10 +244,10 @@ function make(version)
 
             -- write project file
             local proj = path.join(proj_dir, target .. ".vcxproj")
-            _writefileifneeded(proj, render(template_vcx, "#([A-Za-z0-9_,%.%*%(%)]+)#", paramsprovidertarget))
+            _writefileifneeded(proj, render(template_vcx, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidertarget))
 
             local projfil = path.join(proj_dir, target .. ".vcxproj.filters")
-            _writefileifneeded(projfil, render(template_fil, "#([A-Za-z0-9_,%.%*%(%)]+)#", paramsprovidertarget))
+            _writefileifneeded(projfil, render(template_fil, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidertarget))
 
             -- add project custom file
             _trycp(template_props, proj_dir)
@@ -232,6 +257,9 @@ function make(version)
         end
 
         -- clear config and local cache
-        _clear_cacheconf()
+        _clear_cache()
+
+        -- save plugin arguments for autoupdate
+        _save_plugin_arguments()
     end
 end

@@ -38,7 +38,7 @@ rule("qt._wasm_app")
 
 -- define rule: qt static library
 rule("qt.static")
-    add_deps("qt.qrc", "qt.ui", "qt.moc")
+    add_deps("qt.qrc", "qt.ui", "qt.moc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -51,7 +51,7 @@ rule("qt.static")
 
 -- define rule: qt shared library
 rule("qt.shared")
-    add_deps("qt.qrc", "qt.ui", "qt.moc")
+    add_deps("qt.qrc", "qt.ui", "qt.moc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -64,7 +64,7 @@ rule("qt.shared")
 
 -- define rule: qt console
 rule("qt.console")
-    add_deps("qt.qrc", "qt.ui", "qt.moc")
+    add_deps("qt.qrc", "qt.ui", "qt.moc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -76,31 +76,11 @@ rule("qt.console")
     end)
 
     after_install("windows", "install.windows")
+    after_install("mingw", "install.mingw")
 
 -- define rule: qt widgetapp
 rule("qt.widgetapp")
-    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc")
-
-    -- we must set kind before target.on_load(), may we will use target in on_load()
-    on_load(function (target)
-        target:set("kind", target:is_plat("android") and "shared" or "binary")
-    end)
-
-    on_config(function (target)
-        import("load")(target, {gui = true, frameworks = {"QtGui", "QtWidgets", "QtCore"}})
-    end)
-
-    -- deploy application
-    after_build("android", "deploy.android")
-    after_build("macosx", "deploy.macosx")
-
-    -- install application for android
-    on_install("android", "install.android")
-    after_install("windows", "install.windows")
-
--- define rule: qt static widgetapp
-rule("qt.widgetapp_static")
-    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc")
+    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -117,25 +97,37 @@ rule("qt.widgetapp_static")
             qt_sdkver = semver.new(qt.sdkver)
         end
 
-        -- get QtPlatformSupport/QtPlatformCompositorSupport for >=5.9
-        -- https://github.com/xmake-io/xmake/issues/1047
-        local QtPlatformSupport = "QtPlatformSupport"
-        if qt_sdkver and qt_sdkver:ge("5.9") then
-            QtPlatformSupport = "QtPlatformCompositorSupport"
-        end
-
-        -- laod some basic plugins and frameworks
-        local plugins = {}
         local frameworks = {"QtGui", "QtWidgets", "QtCore"}
-        if target:is_plat("macosx") then
-            plugins.QCocoaIntegrationPlugin = {linkdirs = "plugins/platforms", links = {"qcocoa", "cups"}}
-            table.join2(frameworks, QtPlatformSupport, "QtWidgets")
-        elseif target:is_plat("windows") then
-            plugins.QWindowsIntegrationPlugin = {linkdirs = "plugins/platforms", links = {is_mode("debug") and "qwindowsd" or "qwindows"}}
-            table.join2(frameworks, "QtPrintSupport", QtPlatformSupport, "QtWidgets")
-        elseif target:is_plat("wasm") then
-            plugins.QWasmIntegrationPlugin = {linkdirs = "plugins/platforms", links = {"qwasm"}}
-            table.join2(frameworks, "QtEventDispatcherSupport", "QtFontDatabaseSupport", "QtEglSupport")
+        if qt_sdkver and qt_sdkver:lt("5.0") then
+            frameworks = {"QtGui", "QtCore"} -- qt4.x has not QtWidgets, it is in QtGui
+        end
+        import("load")(target, {gui = true, frameworks = frameworks})
+    end)
+
+    -- deploy application
+    after_build("android", "deploy.android")
+    after_build("macosx", "deploy.macosx")
+
+    -- install application for android
+    on_install("android", "install.android")
+    after_install("windows", "install.windows")
+    after_install("mingw", "install.mingw")
+
+-- define rule: qt static widgetapp
+rule("qt.widgetapp_static")
+    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc", "qt.ts")
+
+    -- we must set kind before target.on_load(), may we will use target in on_load()
+    on_load(function (target)
+        target:set("kind", target:is_plat("android") and "shared" or "binary")
+    end)
+
+    on_config(function (target)
+        local frameworks, plugins, qt_sdkver = import("config_static")(target)
+        if qt_sdkver:ge("5.0") then
+            table.join2(frameworks, {"QtGui", "QtWidgets", "QtCore"})
+        else
+            table.join2(frameworks, {"QtGui", "QtCore"})-- qt4.x has not QtWidgets, it is in QtGui
         end
         import("load")(target, {gui = true, plugins = plugins, frameworks = frameworks})
     end)
@@ -147,10 +139,11 @@ rule("qt.widgetapp_static")
     -- install application for android
     on_install("android", "install.android")
     after_install("windows", "install.windows")
+    after_install("mingw", "install.mingw")
 
 -- define rule: qt quickapp
 rule("qt.quickapp")
-    add_deps("qt.qrc", "qt.moc", "qt._wasm_app")
+    add_deps("qt.qrc", "qt.moc", "qt._wasm_app", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -168,10 +161,11 @@ rule("qt.quickapp")
     -- install application for android
     on_install("android", "install.android")
     after_install("windows", "install.windows")
+    after_install("mingw", "install.mingw")
 
 -- define rule: qt static quickapp
 rule("qt.quickapp_static")
-    add_deps("qt.qrc", "qt.moc", "qt._wasm_app")
+    add_deps("qt.qrc", "qt.moc", "qt._wasm_app", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -179,35 +173,8 @@ rule("qt.quickapp_static")
     end)
 
     on_config(function (target)
-
-        -- get qt sdk version
-        local qt = target:data("qt")
-        local qt_sdkver = nil
-        if qt.sdkver then
-            import("core.base.semver")
-            qt_sdkver = semver.new(qt.sdkver)
-        end
-
-        -- get QtPlatformSupport/QtPlatformCompositorSupport for >=5.9
-        -- https://github.com/xmake-io/xmake/issues/1047
-        local QtPlatformSupport = "QtPlatformSupport"
-        if qt_sdkver and qt_sdkver:ge("5.9") then
-            QtPlatformSupport = "QtPlatformCompositorSupport"
-        end
-
-        -- laod some basic plugins and frameworks
-        local plugins = {}
-        local frameworks = {"QtGui", "QtQuick", "QtQml", "QtQmlModels", "QtCore", "QtNetwork"}
-        if target:is_plat("macosx") then
-            plugins.QCocoaIntegrationPlugin = {linkdirs = "plugins/platforms", links = {"qcocoa", "cups"}}
-            table.join2(frameworks, QtPlatformSupport, "QtWidgets")
-        elseif target:is_plat("windows") then
-            plugins.QWindowsIntegrationPlugin = {linkdirs = "plugins/platforms", links = {is_mode("debug") and "qwindowsd" or "qwindows"}}
-            table.join2(frameworks, "QtPrintSupport", QtPlatformSupport, "QtWidgets")
-        elseif target:is_plat("wasm") then
-            plugins.QWasmIntegrationPlugin = {linkdirs = "plugins/platforms", links = {"qwasm"}}
-            table.join2(frameworks, "QtEventDispatcherSupport", "QtFontDatabaseSupport", "QtEglSupport")
-        end
+        local frameworks, plugins = import("config_static")(target)
+        table.join2(frameworks, {"QtGui", "QtQuick", "QtQml", "QtQmlModels", "QtCore", "QtNetwork"})
         import("load")(target, {gui = true, plugins = plugins, frameworks = frameworks})
     end)
 
@@ -218,6 +185,14 @@ rule("qt.quickapp_static")
     -- install application for android
     on_install("android", "install.android")
     after_install("windows", "install.windows")
+    after_install("mingw", "install.mingw")
+
+-- define rule: qt qmlplugin
+rule("qt.qmlplugin")
+    add_deps("qt.shared", "qt.qmltyperegistrar", "qt.ts")
+    on_config(function(target)
+        import("load")(target, {frameworks = { "QtCore", "QtGui", "QtQuick", "QtQml", "QtNetwork" }})
+    end)
 
 -- define rule: qt application (deprecated)
 rule("qt.application")

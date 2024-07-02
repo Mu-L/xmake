@@ -38,17 +38,24 @@ function menu_options()
                                        values = {"release", "debug"}         },
         {'f', "configs",    "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo fetch --configs=\"vs_runtime=MD\" zlib",
+                                       "    - xrepo fetch --configs=\"runtimes='MD'\" zlib",
                                        "    - xrepo fetch --configs=\"regex=true,thread=true\" boost"},
+        {nil, "system",     "k", "false", "Only fetch package on current system."},
         {},
+        {nil, "toolchain",  "kv", nil, "Set the toolchain name."             },
+        {nil, "includes",   "kv", nil, "Includes extra lua configuration files.",
+                                       "e.g.",
+                                       "    - xrepo fetch -p cross --toolchain=mytool --includes='toolchain1.lua" .. path.envsep() .. "toolchain2.lua'"},
         {nil, "deps",       "k",  nil, "Fetch packages with dependencies."   },
         {nil, "cflags",     "k",  nil, "Fetch cflags of the given packages." },
         {nil, "ldflags",    "k",  nil, "Fetch ldflags of the given packages."},
         {'e', "external",   "k",  nil, "Show cflags as external packages with -isystem."},
+        {nil, "json",       "k",  nil, "Output package info as json format." },
         {},
         {nil, "packages",   "vs", nil, "The packages list.",
                                        "e.g.",
                                        "    - xrepo fetch zlib boost",
+                                       "    - xrepo fetch /tmp/zlib.lua",
                                        "    - xrepo fetch -p iphoneos -a arm64 \"zlib >=1.2.0\"",
                                        "    - xrepo fetch -p android -m debug \"pcre2 10.x\"",
                                        "    - xrepo fetch -p mingw -k shared zlib",
@@ -77,23 +84,48 @@ end
 -- fetch packages
 function _fetch_packages(packages)
 
+    -- is package configuration file? e.g. xrepo install xxx.lua
+    --
+    -- xxx.lua
+    --   add_requires("libpng", {system = false})
+    --   add_requireconfs("libpng.*", {configs = {shared = true}})
+    local packagefile
+    if type(packages) == "string" or #packages == 1 then
+        local filepath = table.unwrap(packages)
+        if type(filepath) == "string" and filepath:endswith(".lua") and os.isfile(filepath) then
+            packagefile = path.absolute(filepath)
+        end
+    end
+
+    -- add includes to rcfiles
+    local rcfiles = {}
+    local includes = option.get("includes")
+    if includes then
+        table.join2(rcfiles, path.splitenv(includes))
+    end
+
     -- enter working project directory
-    local workdir = path.join(os.tmpdir(), "xrepo", "working")
+    local subdir = "working"
+    if packagefile then
+        subdir = subdir .. "-" .. hash.uuid(packagefile):split('-')[1]
+    end
+    local workdir = path.join(os.tmpdir(), "xrepo", subdir)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
+    if packagefile then
+        assert(os.isfile("xmake.lua"), "xmake.lua not found!")
+        io.writefile("xmake.lua", ('includes("%s")\ntarget("test", {kind = "phony"})'):format((packagefile:gsub("\\", "/"))))
+    end
 
     -- do configure first
-    local config_argv = {"f", "-c"}
-    if option.get("verbose") then
-        table.insert(config_argv, "-v")
-    end
+    local config_argv = {"f", "-c", "--require=n"}
     if option.get("diagnosis") then
-        table.insert(config_argv, "-D")
+        table.insert(config_argv, "-vD")
     end
     if option.get("plat") then
         table.insert(config_argv, "-p")
@@ -102,6 +134,9 @@ function _fetch_packages(packages)
     if option.get("arch") then
         table.insert(config_argv, "-a")
         table.insert(config_argv, option.get("arch"))
+    end
+    if option.get("toolchain") then
+        table.insert(config_argv, "--toolchain=" .. option.get("toolchain"))
     end
     local mode  = option.get("mode")
     if mode then
@@ -113,7 +148,11 @@ function _fetch_packages(packages)
         table.insert(config_argv, "-k")
         table.insert(config_argv, kind)
     end
-    os.vrunv("xmake", config_argv)
+    local envs = {}
+    if #rcfiles > 0 then
+        envs.XMAKE_RCFILES = path.joinenv(rcfiles)
+    end
+    os.vrunv(os.programfile(), config_argv, {envs = envs})
 
     -- do fetch
     local require_argv = {"require", "--fetch"}
@@ -139,16 +178,19 @@ function _fetch_packages(packages)
     if option.get("external") then
         table.insert(fetchmodes, "external")
     end
+    if option.get("json") then
+        table.insert(fetchmodes, "json")
+    end
     if #fetchmodes > 0 then
         table.insert(require_argv, "--fetch_modes=" .. table.concat(fetchmodes, ','))
     end
-    local extra = {system = false}
+    local extra = {system = option.get("system")}
     if mode == "debug" then
         extra.debug = true
     end
-    if kind == "shared" then
+    if kind then
         extra.configs = extra.configs or {}
-        extra.configs.shared = true
+        extra.configs.shared = kind == "shared"
     end
     local configs = option.get("configs")
     if configs then
@@ -160,12 +202,15 @@ function _fetch_packages(packages)
             raise(errors)
         end
     end
-    if extra then
-        local extra_str = string.serialize(extra, {indent = false, strip = true})
-        table.insert(require_argv, "--extra=" .. extra_str)
+    if not packagefile then
+        -- avoid overriding extra configs in add_requires/xmake.lua
+        if extra then
+            local extra_str = string.serialize(extra, {indent = false, strip = true})
+            table.insert(require_argv, "--extra=" .. extra_str)
+        end
+        table.join2(require_argv, packages)
     end
-    table.join2(require_argv, packages)
-    os.vexecv("xmake", require_argv)
+    os.vexecv(os.programfile(), require_argv, {envs = envs})
 end
 
 -- main entry

@@ -25,14 +25,20 @@ import("core.project.project")
 import("core.platform.platform")
 import("core.package.repository")
 import("devel.git")
-import("private.async.runjobs")
+import("net.proxy")
+import("async.runjobs")
 import("private.action.require.impl.environment")
+import("private.service.remote_build.action", {alias = "remote_build_action"})
+
+function _clear_quick_search_cache(is_global)
+    if is_global then
+        import("private.xrepo.quick_search.cache")
+        cache.clear()
+    end
+end
 
 -- add repository url
 function _add(name, url, branch, is_global)
-
-    -- add url
-    repository.add(name, url, branch, is_global)
 
     -- remove previous repository if exists
     local repodir = path.join(repository.directory(is_global), name)
@@ -45,14 +51,21 @@ function _add(name, url, branch, is_global)
 
     -- clone repository
     if not os.isdir(url) then
-        git.clone(url, {verbose = option.get("verbose"), branch = branch or "master", outputdir = repodir})
+        local remoteurl = proxy.mirror(url) or url
+        git.clone(remoteurl, {verbose = option.get("verbose"), branch = branch, outputdir = repodir, autocrlf = false})
     end
+
+    -- add url
+    repository.add(name, url, branch, is_global)
 
     -- trace
     cprint("${color.success}add %s repository(%s): %s%s ok!", (is_global and "global" or "local"), name, url, branch and (" " .. branch) or "")
 
     -- leave environment
     environment.leave()
+
+    -- clear quick search cache
+    _clear_quick_search_cache(is_global)
 end
 
 -- remove repository url
@@ -67,8 +80,12 @@ function _remove(name, is_global)
         os.rmdir(repodir)
     end
 
+    -- clear quick search cache
+    _clear_quick_search_cache(is_global)
+
     -- trace
     cprint("${bright}remove %s repository(%s): ok!", (is_global and "global" or "local"), name)
+
 end
 
 -- update repositories
@@ -92,48 +109,34 @@ function _update()
         -- pull all repositories
         local pulled = {}
         for _, repo in ipairs(repos) do
-
-            -- the repository directory
             local repodir = repo:directory()
-
-            -- remove repeat and only pull the first repository
             if not pulled[repodir] then
                 if os.isdir(repodir) then
-
-                    -- update the local repository with the remote url
+                    -- only update the local repository with the remote url
                     if not os.isdir(repo:url()) then
-
-                        -- trace
                         vprint("pulling repository(%s): %s to %s ..", repo:name(), repo:url(), repodir)
-
-                        -- pull it
-                        git.pull({verbose = option.get("verbose"), branch = repo:branch() or "master", repodir = repodir})
-
-                        -- mark as updated
+                        git.pull({verbose = option.get("verbose"), branch = repo:branch(), repodir = repodir, force = true})
                         io.save(path.join(repodir, "updated"), {})
                     end
                 else
-                    -- trace
                     vprint("cloning repository(%s): %s to %s ..", repo:name(), repo:url(), repodir)
-
-                    -- clone it
-                    git.clone(repo:url(), {verbose = option.get("verbose"), branch = repo:branch() or "master", outputdir = repodir})
-
-                    -- mark as updated
+                    local remoteurl = proxy.mirror(repo:url()) or repo:url()
+                    git.clone(remoteurl, {verbose = option.get("verbose"), branch = repo:branch(), outputdir = repodir, autocrlf = false})
                     io.save(path.join(repodir, "updated"), {})
                 end
-
-                -- pull this repository ok
                 pulled[repodir] = true
             end
         end
+
+        -- clear quick search cache
+        _clear_quick_search_cache(true)
     end
 
     -- pull repositories
     if option.get("verbose") then
         task()
     else
-        runjobs("update repo", task, {progress = true})
+        runjobs("update repo", task, {progress = true, isolate = true})
     end
 
     -- leave environment
@@ -154,6 +157,9 @@ function _clear(is_global)
     if os.isdir(repodir) then
         os.rmdir(repodir)
     end
+
+    -- clear quick search cache
+    _clear_quick_search_cache(is_global)
 
     -- trace
     cprint("${color.success}clear %s repositories: ok!", (is_global and "global" or "local"))
@@ -208,6 +214,11 @@ end
 
 -- main
 function main()
+
+    -- do action for remote?
+    if remote_build_action.enabled() then
+        return remote_build_action()
+    end
 
     -- load project if operate local repositories
     if not option.get("global") then

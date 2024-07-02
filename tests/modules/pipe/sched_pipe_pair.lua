@@ -1,11 +1,13 @@
 import("core.base.pipe")
+import("core.base.bytes")
 import("core.base.scheduler")
 
 function _session_read(id, pipefile)
     print("%s/%d: read ..", pipefile, id)
     local result = nil
+    local buff = bytes(8192)
     for i = 1, 10000 do
-        local read, data = pipefile:read(12, {block = true})
+        local read, data = pipefile:read(buff, 12, {block = true})
         if read > 0 and data then
             result = data:str()
         end
@@ -24,7 +26,7 @@ function _session_write(id, pipefile)
 end
 
 function _session(id)
-    local rpipe, wpipe = pipe.openpair(256)
+    local rpipe, wpipe = pipe.openpair()
     scheduler.co_start(_session_read, id, rpipe)
     scheduler.co_start(_session_write, id, wpipe)
 end

@@ -113,44 +113,42 @@ end
 
 -- get system version
 function winos.version()
+    local winver = winos._VERSION
+    if winver == nil then
 
-    -- get it from cache first
-    if winos._VERSION ~= nil then
-        return winos._VERSION
-    end
-
-    -- get winver
-    local winver = nil
-    local ok, verstr = os.iorun("cmd /c ver")
-    if ok and verstr then
-        winver = verstr:match("%[.-([%d%.]+)]")
-        if winver then
-            winver = winver:trim()
-        end
-        local sem_winver = nil
-        local seg = 0
-        for num in winver:gmatch("%d+") do
-            if seg == 0 then
-                sem_winver = num
-            elseif seg == 3 then
-                sem_winver = sem_winver .. "+" .. num
-            else
-                sem_winver = sem_winver .. "." .. num
+        -- get winver
+        local ok, verstr = os.iorun("cmd /c ver")
+        if ok and verstr then
+            winver = verstr:match("%[.-([%d%.]+)]")
+            if winver then
+                winver = winver:trim()
+                local sem_winver
+                local seg = 0
+                for num in winver:gmatch("%d+") do
+                    if seg == 0 then
+                        sem_winver = num
+                    elseif seg == 3 then
+                        sem_winver = sem_winver .. "+" .. num
+                    else
+                        sem_winver = sem_winver .. "." .. num
+                    end
+                    seg = seg + 1
+                end
+                if sem_winver then
+                    winver = semver.new(sem_winver)
+                end
             end
-            seg = seg + 1
         end
-        winver = semver.new(sem_winver)
-    end
+        if not winver then
+            winver = semver.new("0.0")
+        end
 
-    -- rewrite comparator
-    if winver then
+        -- rewrite comparator
         winver.eq = winos._version_eq
         winver.lt = winos._version_lt
         winver.le = winos._version_le
+        winos._VERSION = winver
     end
-
-    -- save to cache
-    winos._VERSION = winver or false
     return winver
 end
 
@@ -161,6 +159,7 @@ function winos.cmdargv(argv, opt)
     local limit = 4096
     local argn = 0
     for _, arg in ipairs(argv) do
+        arg = tostring(arg)
         argn = argn + #arg
         if argn > limit then
             break
@@ -168,15 +167,19 @@ function winos.cmdargv(argv, opt)
     end
     if argn > limit then
         opt = opt or {}
-        local argsfile = os.tmpfile(opt.tmpkey or table.concat(argv, '')) .. ".args.txt"
+        local argsfile = os.tmpfile(opt.tmpkey or os.args(argv)) .. ".args.txt"
         local f = io.open(argsfile, 'w', {encoding = "ansi"})
         if f then
-            -- we need split args file to solve `fatal error LNK1170: line in command file contains 131071 or more characters`
+            -- we need to split args file to solve `fatal error LNK1170: line in command file contains 131071 or more characters`
             -- @see https://github.com/xmake-io/xmake/issues/812
             local idx = 1
             while idx <= #argv do
-                arg = argv[idx]
-                -- we need ensure `/name value` in same line,
+                arg = tostring(argv[idx])
+                arg1 = argv[idx + 1]
+                if arg1 then
+                    arg1 = tostring(arg1)
+                end
+                -- we need to ensure `/name value` in same line,
                 -- otherwise cl.exe will prompt that the corresponding parameter value cannot be found
                 --
                 -- e.g.
@@ -185,9 +188,9 @@ function winos.cmdargv(argv, opt)
                 -- -Dxxx
                 -- foo.obj
                 --
-                if idx + 1 <= #argv and arg:find("^[-/]") and not argv[idx + 1]:find("^[-/]") then
+                if idx + 1 <= #argv and arg:find("^[-/]") and not arg1:find("^[-/]") then
                     f:write(os.args(arg, {escape = opt.escape}) .. " ")
-                    f:write(os.args(argv[idx + 1], {escape = opt.escape}) .. "\n")
+                    f:write(os.args(arg1, {escape = opt.escape}) .. "\n")
                     idx = idx + 2
                 else
                     f:write(os.args(arg, {escape = opt.escape}) .. "\n")
@@ -356,6 +359,18 @@ function winos.registry_values(keypath)
     else
         return nil, errors
     end
+end
+
+-- inherit handles in CreateProcess safely?
+-- https://github.com/xmake-io/xmake/issues/2902#issuecomment-1326934902
+--
+function winos.inherit_handles_safely()
+    local inherit_handles_safely = winos._INHERIT_HANDLES_SAFELY
+    if inherit_handles_safely == nil then
+        inherit_handles_safely = winos.version():ge("win7") or false
+        winos._INHERIT_HANDLES_SAFELY = inherit_handles_safely
+    end
+    return inherit_handles_safely
 end
 
 -- return module: winos

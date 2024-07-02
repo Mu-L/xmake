@@ -24,7 +24,7 @@ local string = string or {}
 -- load modules
 local deprecated = require("base/deprecated")
 local serialize  = require("base/serialize")
-local bit        = require("bit")
+local bit        = require("base/bit")
 
 -- save original interfaces
 string._dump   = string._dump or string.dump
@@ -80,6 +80,9 @@ end
 -- ("1.2.3.4.5"):split('%.', {limit = 3}) => 1, 2, 3.4.5
 --
 function string:split(delimiter, opt)
+    if #delimiter == 0 then
+        os.raise("string.split(%s, \"\") use empty delimiter", self)
+    end
     local limit, plain, strict
     if opt then
         limit = opt.limit
@@ -155,8 +158,6 @@ end
 
 -- try to format
 function string.tryformat(format, ...)
-
-    -- attempt to format it
     local ok, str = pcall(string.format, format, ...)
     if ok then
         return str
@@ -379,6 +380,43 @@ function string:wcswidth(idx)
         idx = idx + 1
     end
     return width
+end
+
+-- compute the Levenshtein distance between two strings
+function string:levenshtein(str2)
+    local str1 = self
+    local len1 = #str1
+    local len2 = #str2
+    local matrix = {}
+    local cost = 0
+
+    if len1 == 0 then
+        return len2
+    elseif len2 == 0 then
+        return len1
+    elseif str1 == str2 then
+        return 0
+    end
+
+    for i = 0, len1, 1 do
+        matrix[i] = {}
+        matrix[i][0] = i
+    end
+    for j = 0, len2, 1 do
+        matrix[0][j] = j
+    end
+
+    for i = 1, len1, 1 do
+        for j = 1, len2, 1 do
+            if (str1:byte(i) == str2:byte(j)) then
+                cost = 0
+            else
+                cost = 1
+            end
+            matrix[i][j] = math.min(matrix[i-1][j] + 1, matrix[i][j-1] + 1, matrix[i-1][j-1] + cost)
+        end
+    end
+    return matrix[len1][len2]
 end
 
 -- return module: string

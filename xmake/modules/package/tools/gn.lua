@@ -36,14 +36,54 @@ end
 
 -- get configs
 function _get_configs(package, configs, opt)
+    configs = configs or {}
+    if not package:is_plat("windows") then
+        configs.cc  = package:build_getenv("cc")
+        configs.cxx = package:build_getenv("cxx")
+    end
+    if package:is_plat("macosx") then
+        configs.extra_ldflags = {"-lstdc++"}
+        local xcode = toolchain.load("xcode", {plat = package:plat(), arch = package:arch()})
+        configs.xcode_sysroot = xcode:config("xcode_sysroot")
+    end
+    if package:is_plat("linux") then
+        configs.target_os = "linux"
+    elseif package:is_plat("macosx") then
+        configs.target_os = "mac"
+    elseif package:is_plat("windows") then
+        configs.target_os = "win"
+    elseif package:is_plat("iphoneos") then
+        configs.target_os = "ios"
+    elseif package:is_plat("android") then
+        configs.target_os = "android"
+    end
+    if package:is_arch("x86", "i386") then
+        configs.target_cpu = "x86"
+    elseif package:is_arch("x64", "x86_64") then
+        configs.target_cpu = "x64"
+    elseif package:is_arch("arm64", "arm64-v8a") then
+        configs.target_cpu = "arm64"
+    elseif package:is_arch("arm.*") then
+        configs.target_cpu = "arm"
+    end
+    if configs.is_debug == nil then
+        configs.is_debug = package:is_debug() and true or false
+    end
     return configs
+end
+
+-- get msvc
+function _get_msvc(package)
+    local msvc = package:toolchain("msvc")
+    assert(msvc:check(), "vs not found!") -- we need to check vs envs if it has been not checked yet
+    return msvc
 end
 
 -- get the build environments
 function buildenvs(package, opt)
     local envs = {}
     if package:is_plat("windows") then
-        table.join2(envs, toolchain.load("msvc"):runenvs())
+        envs = os.joinenvs(_get_msvc(package):runenvs())
     end
     return envs
 end

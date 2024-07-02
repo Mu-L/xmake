@@ -89,6 +89,7 @@ function app:_filter_option(name)
     ,   help        = true
     ,   clean       = true
     ,   menu        = true
+    ,   check       = true
     }
     return not options[name]
 end
@@ -232,6 +233,7 @@ function app:_global_configs(cache)
             if type(values) == "function" then
                 values = values()
             end
+            values = table.wrap(values)
             for idx, value in ipairs(values) do
                 if default == value then
                     default = idx

@@ -19,36 +19,35 @@
 --
 
 -- define toolchain
-toolchain("clang")
-
-    -- set homepage
-    set_homepage("https://clang.llvm.org/")
-    set_description("A C language family frontend for LLVM")
-
-    -- mark as standalone toolchain
+function toolchain_clang(version)
+local suffix = ""
+if version then
+    suffix = suffix .. "-" .. version
+end
+toolchain("clang" .. suffix)
     set_kind("standalone")
+    set_homepage("https://clang.llvm.org/")
+    set_description("A C language family frontend for LLVM" .. (version and (" (" .. version .. ")") or ""))
+    set_runtimes("c++_static", "c++_shared", "stdc++_static", "stdc++_shared")
 
-    -- set toolset
-    set_toolset("cc", "clang")
-    set_toolset("cxx", "clang", "clang++")
-    set_toolset("ld", "clang++", "clang")
-    set_toolset("sh", "clang++", "clang")
-    set_toolset("ar", "ar")
-    set_toolset("ex", "ar")
-    set_toolset("strip", "strip")
-    set_toolset("mm", "clang")
-    set_toolset("mxx", "clang", "clang++")
-    set_toolset("as", "clang")
+    set_toolset("cc", "clang" .. suffix)
+    set_toolset("cxx", "clang" .. suffix, "clang++" .. suffix)
+    set_toolset("ld", "clang++" .. suffix, "clang" .. suffix)
+    set_toolset("sh", "clang++" .. suffix, "clang" .. suffix)
+    set_toolset("ar", "ar", "llvm-ar")
+    set_toolset("strip", "strip", "llvm-strip")
+    set_toolset("ranlib", "ranlib", "llvm-ranlib")
+    set_toolset("objcopy", "objcopy", "llvm-objcopy")
+    set_toolset("mm", "clang" .. suffix)
+    set_toolset("mxx", "clang" .. suffix, "clang++" .. suffix)
+    set_toolset("as", "clang" .. suffix)
+    set_toolset("mrc", "llvm-rc")
 
-    -- check toolchain
     on_check(function (toolchain)
-        return import("lib.detect.find_tool")("clang")
+        return import("lib.detect.find_tool")("clang" .. suffix)
     end)
 
-    -- on load
     on_load(function (toolchain)
-
-        -- add march flags
         local march
         if toolchain:is_arch("x86_64", "x64") then
             march = "-m64"
@@ -62,4 +61,9 @@ toolchain("clang")
             toolchain:add("ldflags", march)
             toolchain:add("shflags", march)
         end
+        if toolchain:is_plat("windows") then
+            toolchain:add("runtimes", "MT", "MTd", "MD", "MDd")
+        end
     end)
+end
+toolchain_clang()

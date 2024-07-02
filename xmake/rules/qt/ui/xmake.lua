@@ -21,13 +21,20 @@
 rule("qt.ui")
     add_deps("qt.env")
     set_extensions(".ui")
-    on_load(function (target)
+    on_config(function (target)
 
         -- get uic
-        local uic = path.join(target:data("qt").bindir, is_host("windows") and "uic.exe" or "uic")
+        local qt = assert(target:data("qt"), "Qt not found!")
+        local uic = path.join(qt.bindir, is_host("windows") and "uic.exe" or "uic")
+        if not os.isexec(uic) and qt.libexecdir then
+            uic = path.join(qt.libexecdir, is_host("windows") and "uic.exe" or "uic")
+        end
+        if not os.isexec(uic) and qt.libexecdir_host then
+            uic = path.join(qt.libexecdir_host, is_host("windows") and "uic.exe" or "uic")
+        end
         assert(uic and os.isexec(uic), "uic not found!")
 
-        -- add includedirs, @note we need create this directory first to suppress warning (file not found).
+        -- add includedirs, @note we need to create this directory first to suppress warning (file not found).
         -- and we muse add it in load stage to ensure `depend.on_changed` work.
         --
         -- @see https://github.com/xmake-io/xmake/issues/1180
@@ -48,7 +55,7 @@ rule("qt.ui")
         local headerfile_ui = path.join(headerfile_dir, "ui_" .. path.basename(sourcefile_ui) .. ".h")
         batchcmds:show_progress(opt.progress, "${color.build.object}compiling.qt.ui %s", sourcefile_ui)
         batchcmds:mkdir(headerfile_dir)
-        batchcmds:vrunv(uic, {sourcefile_ui, "-o", headerfile_ui})
+        batchcmds:vrunv(uic, {path(sourcefile_ui), "-o", path(headerfile_ui)})
         batchcmds:add_depfiles(sourcefile_ui)
         batchcmds:set_depmtime(os.mtime(headerfile_ui))
         batchcmds:set_depcache(target:dependfile(headerfile_ui))

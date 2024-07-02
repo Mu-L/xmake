@@ -18,17 +18,13 @@
 -- @file        xmake.lua
 --
 
--- define toolchain
 toolchain("muslcc")
-
-    -- set homepage
     set_homepage("https://musl.cc/")
     set_description("The musl-based cross-compilation toolchains")
 
     -- mark as cross-compilation toolchain
     set_kind("cross")
 
-    -- on load
     on_load(function (toolchain)
 
         -- load basic configuration of cross toolchain
@@ -38,7 +34,6 @@ toolchain("muslcc")
         if toolchain:is_arch("arm") then
             toolchain:add("cxflags", "-march=armv7-a", "-msoft-float", {force = true})
             toolchain:add("ldflags", "-march=armv7-a", "-msoft-float", {force = true})
-            toolchain:add("syslinks", "atomic") -- fix undefined reference to `__atomic_fetch_add_8'
         end
         toolchain:add("syslinks", "gcc", "c")
     end)

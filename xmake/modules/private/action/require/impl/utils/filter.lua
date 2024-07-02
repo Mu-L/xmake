@@ -28,8 +28,6 @@ import("core.sandbox.sandbox")
 
 -- get filter
 function _filter()
-
-    -- init filter
     if _g.filter == nil then
         _g.filter = filter.new()
         _g.filter:register("common", function (variable)
@@ -60,13 +58,9 @@ function _filter()
             if type(result) == "function" then
                 result = result()
             end
-
-            -- ok?
             return result
         end)
     end
-
-    -- ok
     return _g.filter
 end
 
@@ -75,10 +69,7 @@ function _handler(package, strval)
 
     -- @note cannot cache it, because the package instance will be changed
     return function (variable)
-
-        -- init maps
-        local maps =
-        {
+        local maps = {
             version = function ()
                 if strval then
                     -- set_urls("https://sqlite.org/2018/sqlite-autoconf-$(version)000.tar.gz",
@@ -102,14 +93,12 @@ function _handler(package, strval)
         if type(result) == "function" then
             result = result()
         end
-
-        -- ok?
         return result
     end
 end
 
 -- attach filter to the given script and call it
-function call(script, package)
+function call(script, package, opt)
 
     -- get sandbox filter and handlers of the given script
     local sandbox_filter   = sandbox.filter(script)
@@ -122,7 +111,7 @@ function call(script, package)
     sandbox_filter:register("package", _handler(package))
 
     -- call it
-    script(package)
+    script(package, opt)
 
     -- restore handlers
     sandbox_filter:set_handlers(sandbox_handlers)

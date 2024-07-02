@@ -18,15 +18,10 @@
 -- @file        xmake.lua
 --
 
--- define rule: environment
 rule("cuda.env")
 
-    before_load(function (target)
-
-        -- imports
+    on_load(function (target)
         import("detect.sdks.find_cuda")
-
-        -- find cuda sdk first
         local cuda = assert(find_cuda(nil, {verbose = true}), "Cuda SDK not found!")
         if cuda then
             target:data_set("cuda", cuda)
@@ -34,15 +29,13 @@ rule("cuda.env")
     end)
 
     after_load(function (target)
-
-        -- imports
         import("core.platform.platform")
 
         -- get cuda sdk
         local cuda = assert(target:data("cuda"), "Cuda SDK not found!")
 
         -- add arch
-        if is_arch("i386", "x86") then
+        if target:is_arch("i386", "x86") then
             target:add("cuflags", "-m32", {force = true})
             target:add("culdflags", "-m32", {force = true})
         else
@@ -50,10 +43,9 @@ rule("cuda.env")
             target:add("culdflags", "-m64", {force = true})
         end
 
-        -- add ccbin
-        local cu_ccbin = platform.tool("cu-ccbin")
-        if cu_ccbin then
-            target:add("culdflags", "-ccbin=" .. os.args(cu_ccbin), {force = true})
+        -- add rdc, @see https://github.com/xmake-io/xmake/issues/1975
+        if target:values("cuda.rdc") ~= false then
+            target:add("cuflags", "-rdc=true")
         end
 
         -- add links
@@ -68,7 +60,7 @@ rule("cuda.env")
         if not cudart then
             target:add("syslinks", "cudart_static")
         end
-        if is_plat("linux") then
+        if target:is_plat("linux") then
             target:add("syslinks", "rt", "pthread", "dl")
         end
         target:add("linkdirs", cuda.linkdirs)

@@ -38,7 +38,9 @@ function _install_package(manager_name, package_name, opt)
         table.insert(managers, "apt")
         table.insert(managers, "yum")
         table.insert(managers, "pacman")
+        table.insert(managers, "portage")
         table.insert(managers, "brew")
+        table.insert(managers, "zypper")
     elseif is_host("macosx") then
         table.insert(managers, "vcpkg")
         table.insert(managers, "brew")
@@ -92,7 +94,7 @@ function main(name, opt)
     opt.mode = opt.mode or config.mode() or "release"
 
     -- get package manager name
-    local manager_name, package_name = unpack(name:split("::", {plain = true, strict = true}))
+    local manager_name, package_name = table.unpack(name:split("::", {plain = true, strict = true}))
     if package_name == nil then
         package_name = manager_name
         manager_name = nil
@@ -102,7 +104,7 @@ function main(name, opt)
 
     -- get package name and require version
     local require_version = nil
-    package_name, require_version = unpack(package_name:trim():split("%s"))
+    package_name, require_version = table.unpack(package_name:trim():split("%s"))
     opt.require_version = require_version or opt.require_version
 
     -- do install package

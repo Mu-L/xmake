@@ -33,14 +33,20 @@ local vformat   = require("sandbox/modules/vformat")
 local sandbox_os = sandbox_os or {}
 
 -- inherit some builtin interfaces
+sandbox_os.shell        = os.shell
 sandbox_os.term         = os.term
 sandbox_os.host         = os.host
 sandbox_os.arch         = os.arch
 sandbox_os.subhost      = os.subhost
 sandbox_os.subarch      = os.subarch
+sandbox_os.is_host      = os.is_host
+sandbox_os.is_arch      = os.is_arch
+sandbox_os.is_subhost   = os.is_subhost
+sandbox_os.is_subarch   = os.is_subarch
 sandbox_os.syserror     = os.syserror
 sandbox_os.strerror     = os.strerror
 sandbox_os.exit         = os.exit
+sandbox_os.atexit       = os.atexit
 sandbox_os.date         = os.date
 sandbox_os.time         = os.time
 sandbox_os.args         = os.args
@@ -58,9 +64,14 @@ sandbox_os.addenv       = os.addenv
 sandbox_os.setenvp      = os.setenvp
 sandbox_os.addenvp      = os.addenvp
 sandbox_os.getenvs      = os.getenvs
+sandbox_os.setenvs      = os.setenvs
+sandbox_os.addenvs      = os.addenvs
+sandbox_os.joinenvs     = os.joinenvs
 sandbox_os.pbpaste      = os.pbpaste
 sandbox_os.pbcopy       = os.pbcopy
 sandbox_os.cpuinfo      = os.cpuinfo
+sandbox_os.meminfo      = os.meminfo
+sandbox_os.default_njob = os.default_njob
 sandbox_os.emptydir     = os.emptydir
 sandbox_os.filesize     = os.filesize
 sandbox_os.features     = os.features
@@ -70,16 +81,20 @@ sandbox_os.programfile  = os.programfile
 sandbox_os.projectdir   = os.projectdir
 sandbox_os.projectfile  = os.projectfile
 sandbox_os.getwinsize   = os.getwinsize
+sandbox_os.getpid       = os.getpid
 
 -- syserror code
 sandbox_os.SYSERR_UNKNOWN     = os.SYSERR_UNKNOWN
 sandbox_os.SYSERR_NONE        = os.SYSERR_NONE
 sandbox_os.SYSERR_NOT_PERM    = os.SYSERR_NOT_PERM
 sandbox_os.SYSERR_NOT_FILEDIR = os.SYSERR_NOT_FILEDIR
+sandbox_os.SYSERR_NOT_ACCESS  = os.SYSERR_NOT_ACCESS
 
 -- copy file or directory
 function sandbox_os.cp(srcpath, dstpath, opt)
     assert(srcpath and dstpath)
+    srcpath = tostring(srcpath)
+    dstpath = tostring(dstpath)
     local ok, errors = os.cp(vformat(srcpath), vformat(dstpath), opt)
     if not ok then
         os.raise(errors)
@@ -89,6 +104,8 @@ end
 -- move file or directory
 function sandbox_os.mv(srcpath, dstpath)
     assert(srcpath and dstpath)
+    srcpath = tostring(srcpath)
+    dstpath = tostring(dstpath)
     local ok, errors = os.mv(vformat(srcpath), vformat(dstpath))
     if not ok then
         os.raise(errors)
@@ -98,6 +115,7 @@ end
 -- remove files or directories
 function sandbox_os.rm(filepath)
     assert(filepath)
+    filepath = tostring(filepath)
     local ok, errors = os.rm(vformat(filepath))
     if not ok then
         os.raise(errors)
@@ -105,9 +123,11 @@ function sandbox_os.rm(filepath)
 end
 
 -- link file or directory to the new symfile
-function sandbox_os.ln(srcpath, dstpath)
+function sandbox_os.ln(srcpath, dstpath, opt)
     assert(srcpath and dstpath)
-    local ok, errors = os.ln(vformat(srcpath), vformat(dstpath))
+    srcpath = tostring(srcpath)
+    dstpath = tostring(dstpath)
+    local ok, errors = os.ln(vformat(srcpath), vformat(dstpath), opt)
     if not ok then
         os.raise(errors)
     end
@@ -123,21 +143,21 @@ function sandbox_os.vcp(srcpath, dstpath, opt)
 end
 
 -- move file or directory with the verbose info
-function sandbox_os.vmv(srcpath, dstpath)
+function sandbox_os.vmv(srcpath, dstpath, opt)
     assert(srcpath and dstpath)
     if option.get("verbose") then
         utils.cprint("${dim}> move %s to %s", srcpath, dstpath)
     end
-    return sandbox_os.mv(srcpath, dstpath)
+    return sandbox_os.mv(srcpath, dstpath, opt)
 end
 
 -- remove file or directory with the verbose info
-function sandbox_os.vrm(filepath)
+function sandbox_os.vrm(filepath, opt)
     assert(filepath)
     if option.get("verbose") then
         utils.cprint("${dim}> remove %s", filepath)
     end
-    return sandbox_os.rm(filepath)
+    return sandbox_os.rm(filepath, opt)
 end
 
 -- link file or directory with the verbose info
@@ -150,9 +170,9 @@ function sandbox_os.vln(srcpath, dstpath)
 end
 
 -- try to copy file or directory
-function sandbox_os.trycp(srcpath, dstpath)
+function sandbox_os.trycp(srcpath, dstpath, opt)
     assert(srcpath and dstpath)
-    return os.cp(vformat(srcpath), vformat(dstpath))
+    return os.cp(vformat(srcpath), vformat(dstpath), opt)
 end
 
 -- try to move file or directory
@@ -162,9 +182,9 @@ function sandbox_os.trymv(srcpath, dstpath)
 end
 
 -- try to remove files or directories
-function sandbox_os.tryrm(filepath)
+function sandbox_os.tryrm(filepath, opt)
     assert(filepath)
-    return os.rm(vformat(filepath))
+    return os.rm(vformat(filepath), opt)
 end
 
 -- change to directory
@@ -184,6 +204,15 @@ function sandbox_os.cd(dir)
 
     -- ok
     return oldir
+end
+
+-- touch file or directory
+function sandbox_os.touch(filepath, opt)
+    assert(filepath)
+    local ok, errors = os.touch(vformat(filepath), opt)
+    if not ok then
+        os.raise(errors)
+    end
 end
 
 -- create directories
@@ -221,26 +250,15 @@ end
 
 -- get the script directory
 function sandbox_os.scriptdir()
-
-    -- get the current sandbox instance
     local instance = sandbox.instance()
-    assert(instance)
-
-    -- the root directory for this sandbox script
     local rootdir = instance:rootdir()
     assert(rootdir)
-
-    -- ok
     return rootdir
 end
 
 -- quietly run command
 function sandbox_os.run(cmd, ...)
-
-    -- make command
     cmd = vformat(cmd, ...)
-
-    -- run it
     local ok, errors = os.run(cmd)
     if not ok then
         os.raise(errors)
@@ -249,11 +267,7 @@ end
 
 -- quietly run command with arguments list
 function sandbox_os.runv(program, argv, opt)
-
-    -- make program
     program = vformat(program)
-
-    -- run it
     local ok, errors = os.runv(program, argv, opt)
     if not ok then
         os.raise(errors)
@@ -262,25 +276,17 @@ end
 
 -- quietly run command and echo verbose info if [-v|--verbose] option is enabled
 function sandbox_os.vrun(cmd, ...)
-
-    -- echo command
     if option.get("verbose") then
         print(vformat(cmd, ...))
     end
-
-    -- run it
     (option.get("verbose") and sandbox_os.exec or sandbox_os.run)(cmd, ...)
 end
 
 -- quietly run command with arguments list and echo verbose info if [-v|--verbose] option is enabled
 function sandbox_os.vrunv(program, argv, opt)
-
-    -- echo command
     if option.get("verbose") then
         print(vformat(program) .. " " .. sandbox_os.args(argv))
     end
-
-    -- run it
     if not (opt and opt.dryrun) then
         (option.get("verbose") and sandbox_os.execv or sandbox_os.runv)(program, argv, opt)
     end
@@ -288,11 +294,7 @@ end
 
 -- run command and return output and error data
 function sandbox_os.iorun(cmd, ...)
-
-    -- make command
     cmd = vformat(cmd, ...)
-
-    -- run it
     local ok, outdata, errdata, errors = os.iorun(cmd)
     if not ok then
         if not errors then
@@ -303,18 +305,12 @@ function sandbox_os.iorun(cmd, ...)
         end
         os.raise({errors = errors, stderr = errdata, stdout = outdata})
     end
-
-    -- ok
     return outdata, errdata
 end
 
 -- run command and return output and error data
 function sandbox_os.iorunv(program, argv, opt)
-
-    -- make program
     program = vformat(program)
-
-    -- run it
     local ok, outdata, errdata, errors = os.iorunv(program, argv, opt)
     if not ok then
         if not errors then
@@ -325,18 +321,12 @@ function sandbox_os.iorunv(program, argv, opt)
         end
         os.raise({errors = errors, stderr = errdata, stdout = outdata})
     end
-
-    -- ok
     return outdata, errdata
 end
 
 -- execute command
 function sandbox_os.exec(cmd, ...)
-
-    -- make command
     cmd = vformat(cmd, ...)
-
-    -- run it
     local ok, errors = os.exec(cmd)
     if ok ~= 0 then
         if ok ~= nil then
@@ -422,7 +412,7 @@ end
 
 -- match files or directories
 function sandbox_os.match(pattern, mode, callback)
-    return os.match(vformat(pattern), mode, callback)
+    return os.match(vformat(tostring(pattern)), mode, callback)
 end
 
 -- match directories
@@ -443,36 +433,41 @@ end
 -- is directory?
 function sandbox_os.isdir(dirpath)
     assert(dirpath)
+    dirpath = tostring(dirpath)
     return os.isdir(vformat(dirpath))
 end
 
 -- is file?
 function sandbox_os.isfile(filepath)
     assert(filepath)
+    filepath = tostring(filepath)
     return os.isfile(vformat(filepath))
 end
 
 -- is symlink?
 function sandbox_os.islink(filepath)
     assert(filepath)
+    filepath = tostring(filepath)
     return os.islink(vformat(filepath))
 end
 
 -- is execute program?
 function sandbox_os.isexec(filepath)
     assert(filepath)
+    filepath = tostring(filepath)
     return os.isexec(vformat(filepath))
 end
 
 -- exists file or directory?
 function sandbox_os.exists(filedir)
     assert(filedir)
+    filedir = tostring(filedir)
     return os.exists(vformat(filedir))
 end
 
 -- read the content of symlink
 function sandbox_os.readlink(symlink)
-    local result = os.readlink(symlink)
+    local result = os.readlink(tostring(symlink))
     if not result then
         os.raise("cannot read link(%s)", symlink)
     end

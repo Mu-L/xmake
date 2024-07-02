@@ -20,14 +20,14 @@
 
 -- imports
 import("core.project.config")
-import("private.tools.ccache")
+import("core.language.language")
 
 -- init it
 function init(self)
 
     -- init flags map
-    self:set("mapflags",
-    {
+    self:set("mapflags", {
+
         -- symbols
         ["-fvisibility=hidden"]     = ""
 
@@ -59,37 +59,24 @@ end
 
 -- make the strip flag
 function nf_strip(self, level)
-
-    -- the maps
-    local maps =
-    {
+    local maps = {
         debug = "-Xlinker -S"
     ,   all   = "-Xlinker -s"
     }
-
-    -- make it
     return maps[level]
 end
 
 -- make the symbol flag
 function nf_symbol(self, level)
-
-    -- the maps
-    local maps =
-    {
+    local maps = {
         debug = "-g"
     }
-
-    -- make it
     return maps[level]
 end
 
 -- make the warning flag
 function nf_warning(self, level)
-
-    -- the maps
-    local maps =
-    {
+    local maps = {
         none       = "-suppress-warnings"
     ,   less       = "-warn-swift3-objc-inference-minimal"
     ,   more       = "-warn-swift3-objc-inference-minimal"
@@ -97,35 +84,30 @@ function nf_warning(self, level)
     ,   everything = "-warn-swift3-objc-inference-complete"
     ,   error      = "-warnings-as-errors"
     }
-
-    -- make it
     return maps[level]
 end
 
 -- make the optimize flag
 function nf_optimize(self, level)
-
-    -- the maps
-    local maps =
-    {
-        none        = "-Onone"
-    ,   fast        = "-O"
-    ,   faster      = "-O"
-    ,   fastest     = "-O"
-    ,   smallest    = "-O"
-    ,   aggressive  = "-Ounchecked"
-    }
-
-    -- make it
-    return maps[level]
+    -- only for source kind
+    local kind = self:kind()
+    if language.sourcekinds()[kind] then
+        local maps =
+        {
+            none        = "-Onone"
+        ,   fast        = "-O"
+        ,   faster      = "-O"
+        ,   fastest     = "-O"
+        ,   smallest    = "-O"
+        ,   aggressive  = "-Ounchecked"
+        }
+        return maps[level]
+    end
 end
 
 -- make the vector extension flag
 function nf_vectorext(self, extension)
-
-    -- the maps
-    local maps =
-    {
+    local maps = {
         mmx   = "-mmmx"
     ,   sse   = "-msse"
     ,   sse2  = "-msse2"
@@ -135,8 +117,6 @@ function nf_vectorext(self, extension)
     ,   avx2  = "-mavx2"
     ,   neon  = "-mfpu=neon"
     }
-
-    -- make it
     return maps[extension]
 end
 
@@ -187,37 +167,13 @@ function link(self, objectfiles, targetkind, targetfile, flags)
 end
 
 -- make the compile arguments list
-function _compargv1(self, sourcefile, objectfile, flags)
-    return ccache.cmdargv(self:program(), table.join("-c", flags, "-o", objectfile, sourcefile))
+function compargv(self, sourcefile, objectfile, flags)
+    return self:program(), table.join("-c", flags, "-o", objectfile, sourcefile)
 end
 
 -- compile the source file
-function _compile1(self, sourcefile, objectfile, dependinfo, flags)
-
-    -- ensure the object directory
+function compile(self, sourcefile, objectfile, dependinfo, flags)
     os.mkdir(path.directory(objectfile))
-
-    -- compile it
-    os.runv(_compargv1(self, sourcefile, objectfile, flags))
-end
-
--- make the compile arguments list
-function compargv(self, sourcefiles, objectfile, flags)
-
-    -- only support single source file now
-    assert(type(sourcefiles) ~= "table", "'object:sources' not support!")
-
-    -- for only single source file
-    return _compargv1(self, sourcefiles, objectfile, flags)
-end
-
--- compile the source file
-function compile(self, sourcefiles, objectfile, dependinfo, flags)
-
-    -- only support single source file now
-    assert(type(sourcefiles) ~= "table", "'object:sources' not support!")
-
-    -- for only single source file
-    _compile1(self, sourcefiles, objectfile, dependinfo, flags)
+    os.runv(compargv(self, sourcefile, objectfile, flags))
 end
 

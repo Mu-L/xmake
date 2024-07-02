@@ -33,7 +33,7 @@ function _scan_package(packagedir)
     local package_name = path.filename(packagedir)
     for _, versiondir in ipairs(os.dirs(path.join(packagedir, "*"))) do
         local version = path.filename(versiondir)
-        cprint("${magenta}%s-%s${clear}:", package_name, version)
+        cprint("${color.dump.string}%s-%s${clear}:", package_name, version)
 
         -- show package hash
         for _, hashdir in ipairs(os.dirs(path.join(versiondir, "*"))) do
@@ -61,7 +61,7 @@ function _scan_package(packagedir)
             end
             print("")
             if manifest and manifest.configs then
-                print("    -> %s", string.serialize(manifest.configs, true))
+                print("    -> %s", string.serialize(manifest.configs, {orderkeys = true, indent = false, strip = true}))
             end
         end
     end

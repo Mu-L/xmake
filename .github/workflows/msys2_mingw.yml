@@ -7,6 +7,11 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+
+    concurrency:
+        group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-MSYS2_MINGW-${{ matrix.arch }}
+        cancel-in-progress: true
+
     strategy:
       fail-fast: false
       matrix:
@@ -35,8 +40,9 @@ jobs:
         shell: msys2 {0}
         run: |
           cd /C/_
-          make build
-          make install PREFIX=${{ matrix.prefix }}
+          ./configure --prefix=${{ matrix.prefix }}
+          make
+          make install
           xmake --version
 
       - name: Tests

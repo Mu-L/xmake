@@ -412,8 +412,6 @@ end
 
 -- get the given default option value for the current task
 function option.default(name)
-
-    -- check
     assert(name)
 
     -- the defaults
@@ -660,7 +658,7 @@ function option.show_main()
             table.insert(tablecontent, {{string.format("%s%ss: ", string.sub(category.name, 1, 1):upper(), string.sub(category.name, 2)), style="${reset bright}"}})
 
             -- print tasks
-            for taskname, taskinfo in pairs(category.tasks) do
+            for taskname, taskinfo in table.orderpairs(category.tasks) do
 
                 -- init the task line
                 local taskline = string.format(narrow and "  %s%s" or "    %s%s",
@@ -687,8 +685,6 @@ end
 
 -- show the options menu
 function option.show_options(options, taskname)
-
-    -- check
     assert(options)
 
     -- remove repeat empty lines
@@ -696,17 +692,16 @@ function option.show_options(options, taskname)
     local emptyline_count = 0
     local printed_options = {}
     for _, opt in ipairs(options) do
-        if not opt[1] and not opt[2] then
-            emptyline_count = emptyline_count + 1
-        else
-            emptyline_count = 0
+        if opt.category and printed_options[#printed_options].category then
+            table.remove(printed_options)
         end
-        if emptyline_count < 2 then
-            table.insert(printed_options, opt)
-        end
+        table.insert(printed_options, opt)
         if opt.category and opt.category == "action" then
             is_action = true
         end
+    end
+    if printed_options[#printed_options].category then
+        table.remove(printed_options)
     end
 
     -- narrow mode?
@@ -722,19 +717,23 @@ function option.show_options(options, taskname)
     end
 
     -- print options
+    local categories = {}
     for _, opt in ipairs(printed_options) do
-
         if opt.category and opt.category == "action" then
-
             -- the following options are belong action? show command section
             --
             -- @see core/base/task.lua: translate menu
             --
             table.insert(tablecontent, {})
             table.insert(tablecontent, {{"Command options (" .. taskname .. "):", style="${reset bright}"}})
+        elseif opt.category and opt.category ~= "." then
+            local category_root = opt.category:split("/")[1]
+            if not categories[category_root] then
+                table.insert(tablecontent, {})
+                table.insert(tablecontent, {{"Command options (" .. opt.category .. "):", style="${reset bright}"}})
+                categories[category_root] = true
+            end
         elseif opt[3] == nil then
-
-            -- insert empty line
             table.insert(tablecontent, {})
         else
 
@@ -805,7 +804,7 @@ function option.show_options(options, taskname)
             -- append values
             local values = opt.values
             if type(values) == "function" then
-                values = values()
+                values = values(false, {helpmenu = true})
             end
             if values then
                 for _, value in ipairs(table.wrap(values)) do

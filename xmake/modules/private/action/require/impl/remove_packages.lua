@@ -20,6 +20,7 @@
 
 -- imports
 import("core.base.option")
+import("core.base.hashset")
 import("core.package.package")
 import("core.cache.localcache")
 
@@ -32,15 +33,30 @@ function _get_package_configs_str(manifest_file)
             if type(v) == "boolean" then
                 table.insert(configs, k .. ":" .. (v and "y" or "n"))
             else
-                table.insert(configs, k .. ":" .. v)
+                table.insert(configs, k .. ":" .. string.serialize(v, {strip = true, indent = false}))
             end
         end
         local configs_str = #configs > 0 and "[" .. table.concat(configs, ", ") .. "]" or ""
-        local limitwidth = os.getwinsize().width * 2 / 3
+        local limitwidth = math.floor(os.getwinsize().width * 2 / 3)
         if #configs_str > limitwidth then
             configs_str = configs_str:sub(1, limitwidth) .. " ..)"
         end
         return configs_str
+    end
+end
+
+-- has reference from project?
+-- @see https://github.com/xmake-io/xmake/issues/3679
+function _has_reference_from_project(projectdir, packagedir)
+    local project_references_file = path.join(projectdir, ".xmake", os.host(), os.arch(), "cache", "references")
+    if os.isfile(project_references_file) then
+        local references = io.load(project_references_file)
+        if references and references.packages then
+            local packages = hashset.from(references.packages)
+            if packages:has(packagedir) then
+                return true
+            end
+        end
     end
 end
 
@@ -58,7 +74,7 @@ function _remove_packagedirs(packagedir, opt)
             local references = os.isfile(references_file) and io.load(references_file) or nil
             if references then
                 for projectdir, refdate in pairs(references) do
-                    if os.isdir(projectdir) then
+                    if os.isdir(projectdir) and _has_reference_from_project(projectdir, hashdir) then
                         referenced = true
                         break
                     end
@@ -75,7 +91,7 @@ function _remove_packagedirs(packagedir, opt)
             end
             if not opt.clean or status then
                 local configs_str = _get_package_configs_str(manifest_file) or "[]"
-                local description = string.format("remove ${magenta}%s-%s${clear}/${yellow}%s${clear}\n  -> ${dim}%s${clear} (${red}%s${clear})", package_name, version, hash, configs_str, status and status or "used")
+                local description = string.format("remove ${color.dump.string}%s-%s${clear}/${yellow}%s${clear}\n  -> ${dim}%s${clear} (${red}%s${clear})", package_name, version, hash, configs_str, status and status or "used")
                 local confirm = utils.confirm({default = true, description = description})
                 if confirm then
                     os.rm(hashdir)

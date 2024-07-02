@@ -31,7 +31,7 @@ function init(self)
     self:set("shflags", "-shared")
 
     -- add -fPIC for shared
-    if not is_plat("windows", "mingw") then
+    if not self:is_plat("windows", "mingw") then
         self:add("shflags", "-fPIC")
         self:add("shared.cxflags", "-fPIC")
     end
@@ -39,14 +39,11 @@ end
 
 -- make the strip flag
 function nf_strip(self, level)
-    local maps =
-    {
+    local maps = {
         debug = "-S"
     ,   all   = "-s"
     }
-
-    local plat = config.plat()
-    if plat == "macosx" or plat == "iphoneos" then
+    if self:is_plat("macosx", "iphoneos") then
         maps.all   = "-Wl,-x"
         maps.debug = "-Wl,-S"
     end
@@ -80,11 +77,7 @@ end
 
 -- link the target file
 function link(self, objectfiles, targetkind, targetfile, flags)
-
-    -- ensure the target directory
     os.mkdir(path.directory(targetfile))
-
-    -- link it
     os.runv(linkargv(self, objectfiles, targetkind, targetfile, flags))
 end
 

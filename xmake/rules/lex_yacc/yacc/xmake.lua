@@ -20,13 +20,20 @@
 
 -- define rule: yacc
 rule("yacc")
+    add_deps("c++")
     set_extensions(".y", ".yy")
+    on_load(function (target)
+        -- add yacc includedirs if there are yacc files
+        -- @see https://github.com/xmake-io/xmake/issues/4820
+        if target:sourcebatches()["yacc"] then
+            local sourcefile_dir = path.join(target:autogendir(), "rules", "yacc_yacc")
+            target:add("includedirs", sourcefile_dir)
+        end
+    end)
     before_buildcmd_file(function (target, batchcmds, sourcefile_yacc, opt)
 
-        -- imports
-        import("lib.detect.find_tool")
-
         -- get yacc
+        import("lib.detect.find_tool")
         local yacc = assert(find_tool("bison") or find_tool("yacc"), "yacc/bison not found!")
 
         -- get c/c++ source file for yacc
@@ -39,12 +46,11 @@ rule("yacc")
 
         -- add includedirs
         local sourcefile_dir = path.directory(sourcefile_cx)
-        target:add("includedirs", sourcefile_dir)
 
         -- add commands
         batchcmds:show_progress(opt.progress, "${color.build.object}compiling.yacc %s", sourcefile_yacc)
         batchcmds:mkdir(sourcefile_dir)
-        batchcmds:vrunv(yacc.program, {"-d", "-o", sourcefile_cx, sourcefile_yacc})
+        batchcmds:vrunv(yacc.program, {"-d", "-o", path(sourcefile_cx), path(sourcefile_yacc)})
         batchcmds:compile(sourcefile_cx, objectfile)
 
         -- add deps

@@ -31,6 +31,7 @@ local options =
 ,   {'a', "arch",       "kv",  nil,         "Set the architectures. e.g. 'armv7, arm64'"           }
 ,   {'f', "config",     "kv",  nil,         "Pass the config arguments to \"xmake config\" .."     }
 ,   {'o', "outputdir",  "kv",  nil,         "Set the output directory of the package."             }
+,   {nil, "target",     "v",   nil,         "The target name. It will package all default targets if this parameter is not specified."}
 }
 
 -- package all
@@ -49,49 +50,62 @@ function main(argv)
                                            , ""
                                            , "Usage: xmake macro package [options]")
 
-    -- get platform
-    local plat = args.plat
-
-    -- get archs
-    local archs = args.arch and args.arch:split(',') or platform.archs(plat)
-
     -- package all archs
+    local plat = args.plat
+    local archs = args.arch and args.arch:split(',') or platform.archs(plat)
     for _, arch in ipairs(archs) do
-
-        -- config it
-        os.exec("xmake f -p %s -a %s %s -c %s", plat, arch, args.config or "", option.get("verbose") and "-v" or "")
-
-        -- package it
-        if args.outputdir then
-            os.exec("xmake p -o %s %s", args.outputdir, option.get("verbose") and "-v" or "")
-        else
-            os.exec("xmake p %s", option.get("verbose") and "-v" or "")
+        local argv = {"f", "-cy", "-p", plat, "-a", arch}
+        if args.config then
+            table.join2(argv, os.argv(args.config))
         end
+        if option.get("verbose") then
+            table.insert(argv, "-v")
+        end
+        if option.get("diagnosis") then
+            table.insert(argv, "-D")
+        end
+        os.execv(os.programfile(), argv)
+        argv = {"p", "-f", "oldpkg"}
+        if args.outputdir then
+            table.insert(argv, "-o")
+            table.insert(argv, args.outputdir)
+        end
+        if option.get("verbose") then
+            table.insert(argv, "-v")
+        end
+        if option.get("diagnosis") then
+            table.insert(argv, "-D")
+        end
+        if option.get("target") then
+            table.insert(argv, option.get("target"))
+        end
+        os.execv(os.programfile(), argv)
     end
 
     -- package universal for iphoneos, watchos ...
-    if plat == "iphoneos" or plat == "watchos" then
+    if plat == "iphoneos" or plat == "watchos" or plat == "macosx" then
 
-        -- load configure
         config.load()
-
-        -- enter the project directory
         os.cd(project.directory())
 
-        -- the outputdir directory
         local outputdir = args.outputdir or config.get("buildir")
-
-        -- package all targets
-        for _, target in pairs(project.targets()) do
-
-            -- get all modes
+        local targets = {}
+        if option.get("target") then
+            local target = project.target(option.get("target"))
+            if target then
+                table.insert(targets, target)
+            end
+        else
+            for _, target in pairs(project.targets()) do
+                table.insert(targets, target)
+            end
+        end
+        for _, target in ipairs(targets) do
             local modes = {}
             for _, modedir in ipairs(os.dirs(format("%s/%s.pkg/*/*/lib/*", outputdir, target:name()))) do
                 table.insert(modes, path.basename(modedir))
             end
             for _, mode in ipairs(table.unique(modes)) do
-
-                -- make lipo arguments
                 local lipoargs = nil
                 for _, arch in ipairs(archs) do
                     local archfile = format("%s/%s.pkg/%s/%s/lib/%s/%s", outputdir, target:name(), plat, arch:trim(), mode, path.filename(target:targetfile()))
@@ -100,15 +114,9 @@ function main(argv)
                     end
                 end
                 if lipoargs then
-
-                    -- make full lipo arguments
                     lipoargs = format("-create %s -output %s/%s.pkg/%s/universal/lib/%s/%s", lipoargs, outputdir, target:name(), plat, mode, path.filename(target:targetfile()))
-
-                    -- make universal directory
                     os.mkdir(format("%s/%s.pkg/%s/universal/lib/%s", outputdir, target:name(), plat, mode))
-
-                    -- package all archs
-                    os.execv("xmake", {"l", "lipo", lipoargs})
+                    os.execv(os.programfile(), {"l", "lipo", lipoargs})
                 end
             end
         end

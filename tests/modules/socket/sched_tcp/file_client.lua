@@ -10,13 +10,12 @@ function _session(addr, port)
     local recv = 0
     local data = nil
     local wait = false
-    local results = {}
+    local buff = bytes(8192)
     while true do
-        real, data = sock:recv(8192)
+        real, data = sock:recv(buff, 8192)
         if real > 0 then
             recv = recv + real
             wait = false
-            table.insert(results, data)
         elseif real == 0 and not wait then
             if sock:wait(socket.EV_RECV, -1) == socket.EV_RECV then
                 wait = true
@@ -27,16 +26,13 @@ function _session(addr, port)
             break
         end
     end
-    if #results > 0 then
-        data = bytes(results)
-    end
-    print("%s: recv ok, size: %d, #data: %d!", sock, recv, data and data:size() or 0)
+    print("%s: recv ok, size: %d!", sock, recv)
     sock:close()
 end
 
 function main(count)
     count = count and tonumber(count) or 1
     for i = 1, count do
-        scheduler.co_start(_session, "127.0.0.1", 9090)
+        scheduler.co_start(_session, "127.0.0.1", 9092)
     end
 end

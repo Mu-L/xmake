@@ -22,6 +22,7 @@
 import("core.base.option")
 import("core.sandbox.module")
 import("core.sandbox.sandbox")
+import("core.project.project")
 
 -- get all lua scripts
 function scripts()
@@ -122,7 +123,7 @@ function _run_script(script, args)
     if _is_callable(func) then
         local result = table.pack(func(table.unpack(args, 1, args.n)))
         if printresult and result and result.n ~= 0 then
-            utils.dump(unpack(result, 1, result.n))
+            utils.dump(table.unpack(result, 1, result.n))
         end
     else
         -- dump variables directly
@@ -158,6 +159,9 @@ function _get_args()
 end
 
 function main()
+
+    -- restore to the current working directory
+    os.cd(os.workingdir())
 
     -- list builtin scripts
     if option.get("list") then

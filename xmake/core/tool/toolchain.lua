@@ -29,6 +29,8 @@ local utils          = require("base/utils")
 local table          = require("base/table")
 local global         = require("base/global")
 local option         = require("base/option")
+local hashset        = require("base/hashset")
+local scopeinfo      = require("base/scopeinfo")
 local interpreter    = require("base/interpreter")
 local config         = require("project/config")
 local memcache       = require("cache/memcache")
@@ -38,13 +40,14 @@ local sandbox        = require("sandbox/sandbox")
 local sandbox_module = require("sandbox/modules/import/core/sandbox/module")
 
 -- new an instance
-function _instance.new(name, info, cachekey, configs)
-    local instance     = table.inherit(_instance)
-    instance._NAME     = name
-    instance._INFO     = info
-    instance._CACHE    = toolchain._localcache()
-    instance._CACHEKEY = cachekey
-    instance._CONFIGS  = instance._CACHE:get(cachekey) or {}
+function _instance.new(name, info, cachekey, is_builtin, configs)
+    local instance       = table.inherit(_instance)
+    instance._NAME       = name
+    instance._INFO       = info
+    instance._IS_BUILTIN = is_builtin
+    instance._CACHE      = toolchain._localcache()
+    instance._CACHEKEY   = cachekey
+    instance._CONFIGS    = instance._CACHE:get(cachekey) or {}
     for k, v in pairs(configs) do
         instance._CONFIGS[k] = v
     end
@@ -67,12 +70,22 @@ end
 
 -- get toolchain platform
 function _instance:plat()
-    return self:config("plat")
+    return self._PLAT or self:config("plat")
+end
+
+-- set toolchain platform
+function _instance:plat_set(plat)
+    self._PLAT = plat
 end
 
 -- get toolchain architecture
 function _instance:arch()
-    return self:config("arch")
+    return self._ARCH or self:config("arch")
+end
+
+-- set toolchain architecture
+function _instance:arch_set(arch)
+    self._ARCH = arch
 end
 
 -- the current platform is belong to the given platforms?
@@ -131,7 +144,7 @@ function _instance:get(name)
         return value
     end
 
-    -- lazy loading platform
+    -- lazy loading toolchain
     self:_load()
 
     -- get other platform info
@@ -141,6 +154,12 @@ end
 -- get toolchain kind
 function _instance:kind()
     return self:info():get("kind")
+end
+
+-- get toolchain formats, we must set it in description scope
+-- @see https://github.com/xmake-io/xmake/issues/4769
+function _instance:formats()
+    return self:info():get("formats")
 end
 
 -- is cross-compilation toolchain?
@@ -160,6 +179,11 @@ end
 -- is global toolchain for whole platform
 function _instance:is_global()
     return self:config("__global")
+end
+
+-- is builtin toolchain? it's not from local project
+function _instance:is_builtin()
+    return self._IS_BUILTIN
 end
 
 -- get the run environments
@@ -185,6 +209,7 @@ end
 -- get the program and name of the given tool kind
 function _instance:tool(toolkind)
     -- ensure to do load for initializing toolset first
+    -- @note we cannot call self:check() here, because it can only be called on config
     self:_load()
     local toolpaths = self:get("toolset." .. toolkind)
     if toolpaths then
@@ -210,7 +235,7 @@ end
 -- get the bin directory
 function _instance:bindir()
     local bindir = self:config("bindir") or config.get("bin") or self:info():get("bindir")
-    if not bindir and self:cross() and self:sdkdir() and os.isdir(path.join(self:sdkdir(), "bin")) then
+    if not bindir and self:is_cross() and self:sdkdir() and os.isdir(path.join(self:sdkdir(), "bin")) then
         bindir = path.join(self:sdkdir(), "bin")
     end
     return bindir
@@ -260,6 +285,11 @@ function _instance:check()
     return checkok
 end
 
+-- do load manually, it will call on_load()
+function _instance:load()
+    self:_load()
+end
+
 -- check cross toolchain
 function _instance:check_cross_toolchain()
     return sandbox_module.import("toolchains.cross.check", {rootdir = os.programdir(), anonymous = true})(self)
@@ -291,6 +321,19 @@ function _instance:packages()
     return packages or nil
 end
 
+-- save toolchain to file
+function _instance:savefile(filepath)
+    if not self:_is_loaded() then
+        os.raise("we can only save toolchain(%s) after it has been loaded!", self:name())
+    end
+    -- we strip on_load/on_check scripts to solve some issues
+    -- @see https://github.com/xmake-io/xmake/issues/3774
+    local info = table.clone(self:info():info())
+    info.load = nil
+    info.check = nil
+    return io.save(filepath, {name = self:name(), info = info, cachekey = self:cachekey(), configs = self._CONFIGS})
+end
+
 -- on check (builtin)
 function _instance:_on_check()
     local on_check = self:info():get("check")
@@ -309,7 +352,7 @@ function _instance:_on_load()
     return on_load
 end
 
--- do load, @note we need load it repeatly for each architectures
+-- do load, @note we need to load it repeatly for each architectures
 function _instance:_load()
     local info = self:info()
     if not info:get("__loaded") and not info:get("__loading") then
@@ -326,6 +369,11 @@ function _instance:_load()
     end
 end
 
+-- is loaded?
+function _instance:_is_loaded()
+    return self:info():get("__loaded")
+end
+
 -- get the tool description from the tool kind
 function _instance:_description(toolkind)
     local descriptions = self._DESCRIPTIONS
@@ -338,9 +386,10 @@ function _instance:_description(toolkind)
             ld         = "the linker",
             sh         = "the shared library linker",
             ar         = "the static library archiver",
-            ex         = "the static library extractor",
             mrc        = "the windows resource compiler",
             strip      = "the symbols stripper",
+            ranlib     = "the archive index generator",
+            objcopy    = "the GNU objcopy utility",
             dsymutil   = "the symbols generator",
             mm         = "the objc compiler",
             mxx        = "the objc++ compiler",
@@ -369,6 +418,10 @@ function _instance:_description(toolkind)
             cu         = "the cuda compiler",
             culd       = "the cuda linker",
             cuccbin    = "the cuda host c++ compiler",
+            nc         = "the nim compiler",
+            ncld       = "the nim linker",
+            ncsh       = "the nim shared library linker",
+            ncar       = "the nim static library archiver"
         }
         self._DESCRIPTIONS = descriptions
     end
@@ -377,6 +430,13 @@ end
 
 -- check the given tool path
 function _instance:_checktool(toolkind, toolpath)
+
+    -- get result from cache first
+    local cachekey = self:cachekey() .. "_checktool" .. toolkind
+    local result = toolchain._memcache():get3(cachekey, toolkind, toolpath)
+    if result then
+        return result[1], result[2]
+    end
 
     -- get find_tool
     local find_tool = self._find_tool
@@ -399,12 +459,31 @@ function _instance:_checktool(toolkind, toolpath)
         end
     end
 
-    -- find tool program
+    -- contain toolname? parse it, e.g. 'gcc@xxxx.exe'
+    -- https://github.com/xmake-io/xmake/issues/1361
     local program, toolname
-    local tool = find_tool(toolpath, {cachekey = self:cachekey(), program = toolpath, paths = self:bindir(), envs = self:get("runenvs")})
+    if toolpath then
+        local pos = toolpath:find('@', 1, true)
+        if pos then
+            -- we need to ignore valid path with `@`, e.g. /usr/local/opt/go@1.17/bin/go
+            -- https://github.com/xmake-io/xmake/issues/2853
+            local prefix = toolpath:sub(1, pos - 1)
+            if prefix and not prefix:find("[/\\]") then
+                toolname = prefix
+                program = toolpath:sub(pos + 1)
+            end
+        end
+    end
+
+    -- find tool program
+    local tool = find_tool(toolpath, {toolchain = self,
+        cachekey = cachekey,
+        program = program or toolpath,
+        paths = self:bindir(),
+        envs = self:get("runenvs")})
     if tool then
         program = tool.program
-        toolname = tool.name
+        toolname = toolname or tool.name
     end
 
     -- get tool description from the tool kind
@@ -418,6 +497,7 @@ function _instance:_checktool(toolkind, toolpath)
             utils.cprint("${dim}checking for %s (%s: ${bright}%s${clear}) ... ${color.nothing}${text.nothing}", description, toolkind, toolpath)
         end
     end
+    toolchain._memcache():set3(cachekey, toolkind, toolpath, {program, toolname})
     return program, toolname
 end
 
@@ -472,7 +552,7 @@ end
 -- format: toolchain@package
 -- e.g. "clang@llvm-10", "@muslcc", zig
 --
-function toolchain._parsename(name)
+function toolchain.parsename(name)
     local splitinfo = name:split('@', {plain = true, strict = true})
     local toolchain_name = splitinfo[1]
     if toolchain_name == "" then
@@ -496,6 +576,7 @@ function toolchain.apis()
         ,   "toolchain.set_bindir"
         ,   "toolchain.set_sdkdir"
         ,   "toolchain.set_archs"
+        ,   "toolchain.set_runtimes"
         ,   "toolchain.set_homepage"
         ,   "toolchain.set_description"
         }
@@ -532,7 +613,7 @@ function toolchain.load(name, opt)
     -- get toolchain name and packages
     opt = opt or {}
     local packages
-    name, packages = toolchain._parsename(name)
+    name, packages = toolchain.parsename(name)
     opt.packages = opt.packages or packages
 
     -- get cache
@@ -581,7 +662,7 @@ function toolchain.load(name, opt)
     end
 
     -- save instance to the cache
-    instance = _instance.new(name, result, cachekey, opt)
+    instance = _instance.new(name, result, cachekey, true, opt)
     cache:set(cachekey, instance)
     return instance
 end
@@ -592,7 +673,7 @@ function toolchain.load_withinfo(name, info, opt)
     -- get toolchain name and packages
     opt = opt or {}
     local packages
-    name, packages = toolchain._parsename(name)
+    name, packages = toolchain.parsename(name)
     opt.packages = opt.packages or packages
 
     -- get cache key
@@ -608,10 +689,30 @@ function toolchain.load_withinfo(name, info, opt)
     end
 
     -- save instance to the cache
-    instance = _instance.new(name, info, cachekey, opt)
+    instance = _instance.new(name, info, cachekey, false, opt)
     cache:set(cachekey, instance)
     return instance
 end
+
+-- load toolchain from file
+function toolchain.load_fromfile(filepath, opt)
+    local fileinfo, errors = io.load(filepath)
+    if not fileinfo then
+        return nil, errors
+    end
+    if not fileinfo.name or not fileinfo.info then
+        return nil, string.format("%s is invalid toolchain info file!", filepath)
+    end
+    opt = table.join(opt or {}, fileinfo.configs)
+    opt.cachekey = fileinfo.cachekey
+    local scope_opt = {interpreter = toolchain._interpreter(), deduplicate = true, enable_filter = true}
+    local info = scopeinfo.new("toolchain", fileinfo.info, scope_opt)
+    local instance = toolchain.load_withinfo(fileinfo.name, info, opt)
+    -- we need to skip check
+    instance._CHECKED = true
+    return instance
+end
+
 
 -- get the program and name of the given tool kind
 function toolchain.tool(toolchains, toolkind, opt)
@@ -662,8 +763,13 @@ function toolchain.tool(toolchains, toolkind, opt)
     if program and type(program) == "string" then
         local pos = program:find('@', 1, true)
         if pos then
-            toolname = program:sub(1, pos - 1)
-            program = program:sub(pos + 1)
+            -- we need to ignore valid path with `@`, e.g. /usr/local/opt/go@1.17/bin/go
+            -- https://github.com/xmake-io/xmake/issues/2853
+            local prefix = program:sub(1, pos - 1)
+            if prefix and not prefix:find("[/\\]") then
+                toolname = prefix
+                program = program:sub(pos + 1)
+            end
             updatecache = true
         end
     end

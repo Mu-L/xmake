@@ -32,7 +32,7 @@ rule("xcode.info_plist")
         import("core.theme.theme")
         import("core.project.depend")
         import("core.tool.toolchain")
-        import("private.utils.progress")
+        import("utils.progress")
 
         -- check
         assert(path.filename(sourcefile) == "Info.plist", "we only support Info.plist file!")
@@ -43,7 +43,7 @@ rule("xcode.info_plist")
 
         -- need re-compile it?
         local dependfile = target:dependfile(sourcefile)
-        local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+        local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile) or {})
         if not depend.is_changed(dependinfo, {lastmtime = os.mtime(dependfile)}) then
             return
         end
@@ -52,7 +52,13 @@ rule("xcode.info_plist")
         progress.show(opt.progress, "${color.build.object}processing.xcode.$(mode) %s", sourcefile)
 
         -- process and generate Info.plist
-        local info_plist_file = path.join(target:rule("xcode.framework") and resourcesdir or contentsdir, path.filename(sourcefile))
+        -- https://github.com/xmake-io/xmake/issues/2765#issuecomment-1251738622
+        local info_plist_file
+        if target:rule("xcode.framework") and target:is_plat("macosx") then
+            info_plist_file = path.join(resourcesdir, path.filename(sourcefile))
+        else
+            info_plist_file = path.join(contentsdir, path.filename(sourcefile))
+        end
         local maps =
         {
             DEVELOPMENT_LANGUAGE = "en",
@@ -80,6 +86,16 @@ rule("xcode.info_plist")
         io.gsub(info_plist_file, "(%$%((.-)%))", function (_, variable)
             return maps[variable]
         end)
+
+        -- patch some entries for mac catalyst
+        local xcode = target:toolchain("xcode")
+        if xcode and xcode:config("appledev") == "catalyst" then
+            -- remove entry for "LSRequiresIPhoneOS" - not supported on macOS
+            --
+            -- <key>LSRequiresIPhoneOS</key>
+            -- <true/>
+            io.replace(info_plist_file, "<key>LSRequiresIPhoneOS</key>.-<true/>", "")
+        end
 
         -- update files and values to the dependent file
         dependinfo.files = {sourcefile}

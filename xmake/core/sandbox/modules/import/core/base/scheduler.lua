@@ -49,6 +49,15 @@ function sandbox_core_base_scheduler.co_start_named(coname, cotask, ...)
     return co
 end
 
+-- start a new coroutine task with options
+function sandbox_core_base_scheduler.co_start_withopt(opt, cotask, ...)
+    local co, errors = scheduler:co_start_withopt(opt, cotask, ...)
+    if not co then
+        raise(errors)
+    end
+    return co
+end
+
 -- resume the given coroutine
 function sandbox_core_base_scheduler.co_resume(co, ...)
     return scheduler:resume(co:thread(), ...)
@@ -70,6 +79,22 @@ end
 -- sleep some times (ms)
 function sandbox_core_base_scheduler.co_sleep(ms)
     local ok, errors = scheduler:co_sleep(ms)
+    if not ok then
+        raise(errors)
+    end
+end
+
+-- lock the current coroutine
+function sandbox_core_base_scheduler.co_lock(lockname)
+    local ok, errors = scheduler:co_lock(lockname)
+    if not ok then
+        raise(errors)
+    end
+end
+
+-- unlock the current coroutine
+function sandbox_core_base_scheduler.co_unlock(lockname)
+    local ok, errors = scheduler:co_unlock(lockname)
     if not ok then
         raise(errors)
     end

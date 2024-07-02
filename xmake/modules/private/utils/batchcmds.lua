@@ -28,10 +28,10 @@ import("core.theme.theme")
 import("core.tool.linker")
 import("core.tool.compiler")
 import("core.language.language")
-import("private.utils.progress", {alias = "progress_utils"})
+import("utils.progress", {alias = "progress_utils"})
 
 -- define module
-local batchcmds = batchcmds or object { _init = {"_TARGET", "_CMDS", "_DEPS", "_tip"}}
+local batchcmds = batchcmds or object { _init = {"_TARGET", "_CMDS", "_DEPINFO", "_tip"}}
 
 -- show text
 function _show(showtext, progress)
@@ -109,6 +109,17 @@ function _runcmd_execv(cmd, opt)
     end
 end
 
+-- run command: os.vexecv
+function _runcmd_vexecv(cmd, opt)
+    if cmd.program then
+        if opt.dryrun then
+            print(os.args(table.join(cmd.program, cmd.argv)))
+        else
+            os.vexecv(cmd.program, cmd.argv, cmd.opt)
+        end
+    end
+end
+
 -- run command: os.mkdir
 function _runcmd_mkdir(cmd, opt)
     local dir = cmd.dir
@@ -117,32 +128,48 @@ function _runcmd_mkdir(cmd, opt)
     end
 end
 
+-- run command: os.cd
+function _runcmd_cd(cmd, opt)
+    local dir = cmd.dir
+    if not opt.dryrun then
+        os.cd(dir)
+    end
+end
+
 -- run command: os.rm
 function _runcmd_rm(cmd, opt)
     local filepath = cmd.filepath
     if not opt.dryrun then
-        os.tryrm(filepath)
+        os.tryrm(filepath, opt)
+    end
+end
+
+-- run command: os.rmdir
+function _runcmd_rmdir(cmd, opt)
+    local dir = cmd.dir
+    if not opt.dryrun and os.isdir(dir) then
+        os.tryrm(dir, opt)
     end
 end
 
 -- run command: os.cp
 function _runcmd_cp(cmd, opt)
     if not opt.dryrun then
-        os.cp(opt.srcpath, opt.dstpath, opt.opt)
+        os.cp(cmd.srcpath, cmd.dstpath, opt.opt)
     end
 end
 
 -- run command: os.mv
 function _runcmd_mv(cmd, opt)
     if not opt.dryrun then
-        os.mv(opt.srcpath, opt.dstpath, opt.opt)
+        os.mv(cmd.srcpath, cmd.dstpath, opt.opt)
     end
 end
 
 -- run command: os.ln
 function _runcmd_ln(cmd, opt)
     if not opt.dryrun then
-        os.ln(opt.srcpath, opt.dstpath, opt.opt)
+        os.ln(cmd.srcpath, cmd.dstpath, opt.opt)
     end
 end
 
@@ -153,15 +180,18 @@ function _runcmd(cmd, opt)
     if not maps then
         maps =
         {
-            show  = _runcmd_show,
-            runv  = _runcmd_runv,
-            vrunv = _runcmd_vrunv,
-            execv = _runcmd_execv,
-            mkdir = _runcmd_mkdir,
-            rm    = _runcmd_rm,
-            cp    = _runcmd_cp,
-            mv    = _runcmd_mv,
-            ln    = _runcmd_ln
+            show   = _runcmd_show,
+            runv   = _runcmd_runv,
+            vrunv  = _runcmd_vrunv,
+            execv  = _runcmd_execv,
+            vexecv = _runcmd_vexecv,
+            mkdir  = _runcmd_mkdir,
+            rmdir  = _runcmd_rmdir,
+            cd     = _runcmd_cd,
+            rm     = _runcmd_rm,
+            cp     = _runcmd_cp,
+            mv     = _runcmd_mv,
+            ln     = _runcmd_ln
         }
         _g.maps = maps
     end
@@ -191,19 +221,21 @@ end
 -- add command: os.runv
 function batchcmds:runv(program, argv, opt)
     table.insert(self:cmds(), {kind = "runv", program = program, argv = argv, opt = opt})
-    self:add_depvalues(program, argv)
 end
 
 -- add command: os.vrunv
 function batchcmds:vrunv(program, argv, opt)
     table.insert(self:cmds(), {kind = "vrunv", program = program, argv = argv, opt = opt})
-    self:add_depvalues(program, argv)
 end
 
 -- add command: os.execv
 function batchcmds:execv(program, argv, opt)
     table.insert(self:cmds(), {kind = "execv", program = program, argv = argv, opt = opt})
-    self:add_depvalues(program, argv)
+end
+
+-- add command: os.vexecv
+function batchcmds:vexecv(program, argv, opt)
+    table.insert(self:cmds(), {kind = "vexecv", program = program, argv = argv, opt = opt})
 end
 
 -- add command: compiler.compile
@@ -213,17 +245,66 @@ function batchcmds:compile(sourcefiles, objectfile, opt)
     opt = opt or {}
     opt.target = self._TARGET
 
+    -- wrap path for sourcefiles, because we need to translate path for project generator
+    if type(sourcefiles) == "table" then
+        local sourcefiles_wrap = {}
+        for _, sourcefile in ipairs(sourcefiles) do
+            table.insert(sourcefiles_wrap, path(sourcefile))
+        end
+        sourcefiles = sourcefiles_wrap
+    else
+        sourcefiles = path(sourcefiles)
+    end
+
     -- load compiler and get compilation command
     local sourcekind = opt.sourcekind
-    if not sourcekind and type(sourcefiles) == "string" then
-        sourcekind = language.sourcekind_of(sourcefiles)
+    if not sourcekind and type(sourcefiles) == "string" or path.instance_of(sourcefiles) then
+        sourcekind = language.sourcekind_of(tostring(sourcefiles))
     end
     local compiler_inst = compiler.load(sourcekind, opt)
-    local program, argv = compiler_inst:compargv(sourcefiles, objectfile, opt)
+    local _, argv = compiler_inst:compargv(sourcefiles, path(objectfile), opt)
 
     -- add compilation command and bind run environments of compiler
     self:mkdir(path.directory(objectfile))
-    self:vrunv(program, argv, {envs = table.join(compiler_inst:runenvs(), opt.envs)})
+    self:compilev(argv, table.join({sourcekind = sourcekind, compiler = compiler_inst}, opt))
+end
+
+-- add command: compiler.compilev
+function batchcmds:compilev(argv, opt)
+
+    -- bind target if exists
+    opt = opt or {}
+    opt.target = self._TARGET
+
+    -- load compiler and get compilation command
+    local compiler_inst = opt.compiler
+    if not compiler_inst then
+        local sourcekind = opt.sourcekind
+        compiler_inst = compiler.load(sourcekind, opt)
+    end
+
+    -- we need to translate path for the project generator
+    local patterns = {"^([%-/]external:I)(.*)",
+                      "^([%-/]I)(.*)",
+                      "^([%-/]Fp)(.*)",
+                      "^([%-/]Fd)(.*)",
+                      "^([%-/]Yu)(.*)",
+                      "^([%-/]FI)(.*)"}
+    for idx, item in ipairs(argv) do
+        if type(item) == "string" then
+            for _, pattern in ipairs(patterns) do
+                local _, count = item:gsub(pattern, function (prefix, value)
+                    argv[idx] = path(value, function (p) return prefix .. p end)
+                end)
+                if count > 0 then
+                    break
+                end
+            end
+        end
+    end
+
+    -- add compilation command and bind run environments of compiler
+    self:vrunv(compiler_inst:program(), argv, {envs = table.join(compiler_inst:runenvs(), opt.envs)})
 end
 
 -- add command: linker.link
@@ -234,9 +315,33 @@ function batchcmds:link(objectfiles, targetfile, opt)
     opt = opt or {}
     opt.target = target
 
+    -- wrap path for objectfiles, because we need to translate path for project generator
+    local objectfiles_wrap = {}
+    for _, objectfile in ipairs(objectfiles) do
+        table.insert(objectfiles_wrap, path(objectfile))
+    end
+    objectfiles = objectfiles_wrap
+
     -- load linker and get link command
     local linker_inst = target and target:linker() or linker.load(opt.targetkind, opt.sourcekinds, opt)
-    local program, argv = linker_inst:linkargv(objectfiles, targetfile, opt)
+    local program, argv = linker_inst:linkargv(objectfiles, path(targetfile), opt)
+
+    -- we need to translate path for the project generator
+    local patterns = {"^([%-/]L)(.*)",
+                      "^([%-/]F)(.*)",
+                      "^([%-/]libpath:)(.*)"}
+    for idx, item in ipairs(argv) do
+        if type(item) == "string" then
+            for _, pattern in ipairs(patterns) do
+                local _, count = item:gsub(pattern, function (prefix, value)
+                    argv[idx] = path(value, function (p) return prefix .. p end)
+                end)
+                if count > 0 then
+                    break
+                end
+            end
+        end
+    end
 
     -- add link command and bind run environments of linker
     self:mkdir(path.directory(targetfile))
@@ -248,9 +353,14 @@ function batchcmds:mkdir(dir)
     table.insert(self:cmds(), {kind = "mkdir", dir = dir})
 end
 
+-- add command: os.rmdir
+function batchcmds:rmdir(dir, opt)
+    table.insert(self:cmds(), {kind = "rmdir", dir = dir, opt = opt})
+end
+
 -- add command: os.rm
-function batchcmds:rm(filepath)
-    table.insert(self:cmds(), {kind = "rm", filepath = filepath})
+function batchcmds:rm(filepath, opt)
+    table.insert(self:cmds(), {kind = "rm", filepath = filepath, opt = opt})
 end
 
 -- add command: os.cp
@@ -268,10 +378,20 @@ function batchcmds:ln(srcpath, dstpath, opt)
     table.insert(self:cmds(), {kind = "ln", srcpath = srcpath, dstpath = dstpath, opt = opt})
 end
 
+-- add command: os.cd
+function batchcmds:cd(dir, opt)
+    table.insert(self:cmds(), {kind = "cd", dir = dir, opt = opt})
+end
+
 -- add command: show
 function batchcmds:show(format, ...)
     local showtext = string.format(format, ...)
     table.insert(self:cmds(), {kind = "show", showtext = showtext})
+end
+
+-- add raw command for the specific generator or xpack format
+function batchcmds:rawcmd(kind, rawstr)
+    table.insert(self:cmds(), {kind = kind, rawstr = rawstr})
 end
 
 -- add command: show progress
@@ -282,39 +402,39 @@ function batchcmds:show_progress(progress, format, ...)
     end
 end
 
--- get deps
-function batchcmds:deps()
-    return self._DEPS
+-- get depinfo
+function batchcmds:depinfo()
+    return self._DEPINFO
 end
 
 -- add dependent files
 function batchcmds:add_depfiles(...)
-    local deps = self._DEPS or {}
-    deps.files = deps.files or {}
-    table.join2(deps.files, ...)
-    self._DEPS = deps
+    local depinfo = self._DEPINFO or {}
+    depinfo.files = depinfo.files or {}
+    table.join2(depinfo.files, ...)
+    self._DEPINFO = depinfo
 end
 
 -- add dependent values
 function batchcmds:add_depvalues(...)
-    local deps = self._DEPS or {}
-    deps.values = deps.values or {}
-    table.join2(deps.values, ...)
-    self._DEPS = deps
+    local depinfo = self._DEPINFO or {}
+    depinfo.values = depinfo.values or {}
+    table.join2(depinfo.values, ...)
+    self._DEPINFO = depinfo
 end
 
 -- set the last mtime of dependent files and values
 function batchcmds:set_depmtime(lastmtime)
-    local deps = self._DEPS or {}
-    deps.lastmtime = lastmtime
-    self._DEPS = deps
+    local depinfo = self._DEPINFO or {}
+    depinfo.lastmtime = lastmtime
+    self._DEPINFO = depinfo
 end
 
 -- set cache file of depend info
 function batchcmds:set_depcache(cachefile)
-    local deps = self._DEPS or {}
-    deps.dependfile = cachefile
-    self._DEPS = deps
+    local depinfo = self._DEPINFO or {}
+    depinfo.dependfile = cachefile
+    self._DEPINFO = depinfo
 end
 
 -- run cmds
@@ -323,11 +443,11 @@ function batchcmds:runcmds(opt)
     if self:empty() then
         return
     end
-    local deps = self:deps()
-    if deps and deps.files then
+    local depinfo = self:depinfo()
+    if depinfo and depinfo.files then
         depend.on_changed(function ()
             _runcmds(self:cmds(), opt)
-        end, self:deps())
+        end, table.join(depinfo, {dryrun = opt.dryrun, changed = opt.changed}))
     else
         _runcmds(self:cmds(), opt)
     end
@@ -341,3 +461,4 @@ function new(opt)
     opt = opt or {}
     return batchcmds {_TARGET = opt.target, _CMDS = {}}
 end
+

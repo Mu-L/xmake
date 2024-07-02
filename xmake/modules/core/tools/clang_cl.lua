@@ -23,6 +23,7 @@ inherit("cl")
 import("core.base.option")
 import("core.base.tty")
 import("core.base.colors")
+import("core.project.policy")
 
 -- init it
 function init(self)
@@ -51,14 +52,20 @@ function init(self)
     ,   ["-std=c++17"]              = "-Xclang -std=c++17"
     ,   ["-std=c++1z"]              = "-Xclang -std=c++1z"
     ,   ["-std=c++1a"]              = "-Xclang -std=c++1a"
+    ,   ["-std=c++20"]              = "-Xclang -std=c++20"
     ,   ["-std=c++2a"]              = "-Xclang -std=c++2a"
+    ,   ["-std=c++23"]              = "-Xclang -std=c++23"
+    ,   ["-std=c++2b"]              = "-Xclang -std=c++2b"
     ,   ["-std=gnu++98"]            = "-Xclang -std=gnu++98"
     ,   ["-std=gnu++11"]            = "-Xclang -std=gnu++11"
     ,   ["-std=gnu++14"]            = "-Xclang -std=gnu++14"
     ,   ["-std=gnu++17"]            = "-Xclang -std=gnu++17"
     ,   ["-std=gnu++1z"]            = "-Xclang -std=gnu++1z"
     ,   ["-std=gnu++1a"]            = "-Xclang -std=gnu++1a"
+    ,   ["-std=gnu++20"]            = "-Xclang -std=gnu++20"
     ,   ["-std=gnu++2a"]            = "-Xclang -std=gnu++2a"
+    ,   ["-std=gnu++23"]            = "-Xclang -std=gnu++23"
+    ,   ["-std=gnu++2b"]            = "-Xclang -std=gnu++2b"
     })
 end
 
@@ -76,6 +83,12 @@ function _has_color_diagnostics(self)
                 elseif self:has_flags("-fdiagnostics-color=always", "cxflags") then
                     colors_diagnostics = "-fdiagnostics-color=always"
                 end
+
+                -- enable color output for windows, @see https://github.com/xmake-io/xmake-vscode/discussions/260
+                if colors_diagnostics and
+                    self:has_flags("-fansi-escape-codes", "cxflags") then
+                    colors_diagnostics = table.join(colors_diagnostics, "-fansi-escape-codes")
+                end
             end
         end
         colors_diagnostics = colors_diagnostics or false
@@ -86,82 +99,54 @@ end
 
 -- make the optimize flag
 function nf_optimize(self, level)
-
-    -- the maps
     local maps =
     {
-        none       = "-O0"
-    ,   fast       = "-O1"
-    ,   faster     = "-O2"
-    ,   fastest    = "-O3"
-    ,   smallest   = "-Os"
-    ,   aggressive = "-Ofast"
+        none        = "-Od"
+    ,   faster      = "-Ox"
+    ,   fastest     = "-O2"
+    ,   smallest    = "-O1"
+    ,   aggressive  = "-O2"
     }
-
-    -- make it
     return maps[level]
 end
 
--- make the language flag
-function nf_language(self, stdname)
-
-    -- the stdc maps
-    if _g.cmaps == nil then
-        _g.cmaps =
-        {
-            -- stdc
-            ansi        = "-Xclang -ansi"
-        ,   c89         = "-Xclang -std=c89"
-        ,   gnu89       = "-Xclang -std=gnu89"
-        ,   c99         = "-Xclang -std=c99"
-        ,   gnu99       = "-Xclang -std=gnu99"
-        ,   c11         = "-Xclang -std=c11"
-        ,   gnu11       = "-Xclang -std=gnu11"
-        }
-    end
-
-    -- the stdc++ maps
-    if _g.cxxmaps == nil then
-        _g.cxxmaps =
-        {
-            cxx98        = "-Xclang -std=c++98"
-        ,   gnuxx98      = "-Xclang -std=gnu++98"
-        ,   cxx11        = "-Xclang -std=c++11"
-        ,   gnuxx11      = "-Xclang -std=gnu++11"
-        ,   cxx14        = "-Xclang -std=c++14"
-        ,   gnuxx14      = "-Xclang -std=gnu++14"
-        ,   cxx17        = "-Xclang -std=c++17"
-        ,   gnuxx17      = "-Xclang -std=gnu++17"
-        ,   cxx1z        = "-Xclang -std=c++1z"
-        ,   gnuxx1z      = "-Xclang -std=gnu++1z"
-        ,   cxx20        = "-Xclang -std=c++2a"
-        ,   gnuxx20      = "-Xclang -std=gnu++2a"
-        ,   cxx2a        = "-Xclang -std=c++2a"
-        ,   gnuxx2a      = "-Xclang -std=gnu++2a"
-        }
-        local cxxmaps2 = {}
-        for k, v in pairs(_g.cxxmaps) do
-            cxxmaps2[k:gsub("xx", "++")] = v
+-- make the c precompiled header flag
+function nf_pcheader(self, pcheaderfile, opt)
+    local target = opt.target
+    if self:kind() == "cc" then
+        local objectfiles = target:objectfiles()
+        if objectfiles then
+            table.insert(objectfiles, target:pcoutputfile("c") .. ".obj")
         end
-        table.join2(_g.cxxmaps, cxxmaps2)
+        return {"-Yu" .. path.filename(pcheaderfile),
+                "-FI" .. path.filename(pcheaderfile),
+                "-I" .. path.directory(pcheaderfile),
+                "-Fp" .. target:pcoutputfile("c")}
     end
+end
 
-    -- select maps
-    local maps = _g.cmaps
-    if self:kind() == "cxx" or self:kind() == "mxx" then
-        maps = _g.cxxmaps
+-- make the c++ precompiled header flag
+function nf_pcxxheader(self, pcheaderfile, opt)
+    local target = opt.target
+    if self:kind() == "cxx" then
+        local objectfiles = target:objectfiles()
+        if objectfiles then
+            table.insert(objectfiles, target:pcoutputfile("cxx") .. ".obj")
+        end
+        -- https://github.com/xmake-io/xmake/issues/3905
+        -- clang-cl need extra include search path
+        return {"-Yu" .. path.filename(pcheaderfile),
+                "-FI" .. path.filename(pcheaderfile),
+                "-I" .. path.directory(pcheaderfile),
+                "-Fp" .. target:pcoutputfile("cxx")}
     end
-
-    -- make it
-    return maps[stdname]
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
-    -- @note this path here has been normalized, we can quickly find it by the unique path separator prompt
-    os.mkdir(path.directory(objectfile, path.sep()))
+    os.mkdir(path.directory(objectfile))
 
     -- compile it
     local outdata = try
@@ -181,7 +166,8 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             end
 
             -- do compile
-            return os.iorunv(compargv(self, sourcefile, objectfile, compflags))
+            local program, argv = compargv(self, sourcefile, objectfile, compflags)
+            return os.iorunv(program, argv, {envs = self:runenvs()})
         end,
         catch
         {
@@ -205,7 +191,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
 
                     -- get 16 lines of errors
                     if start > 0 then
-                        lines = table.slice(lines, start, start + ifelse(#lines - start > 16, 16, #lines - start))
+                        lines = table.slice(lines, start, start + ((#lines - start > 16) and 16 or (#lines - start)))
                     end
                 end
 
@@ -217,10 +203,10 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
         {
             function (ok, outdata, errdata)
                 -- show warnings?
-                if ok and errdata and #errdata > 0 and (option.get("diagnosis") or option.get("warning")) then
+                if ok and errdata and #errdata > 0 and policy.build_warnings(opt) then
                     local lines = errdata:split('\n', {plain = true})
                     if #lines > 0 then
-                        local warnings = table.concat(table.slice(lines, 1, ifelse(#lines > 8, 8, #lines)), "\n")
+                        local warnings = table.concat(table.slice(lines, 1, (#lines > 8 and 8 or #lines)), "\n")
                         cprint("${color.warning}%s", warnings)
                     end
                 end
@@ -233,4 +219,3 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
         dependinfo.depfiles_cl = outdata
     end
 end
-

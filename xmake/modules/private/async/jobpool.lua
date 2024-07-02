@@ -20,10 +20,16 @@
 
 -- imports
 import("core.base.object")
+import("core.base.list")
 import("core.base.hashset")
 
 -- define module
 local jobpool = jobpool or object {_init = {"_size", "_rootjob", "_leafjobs"}}
+
+-- the job status
+local JOB_STATUS_FREE     = 1
+local JOB_STATUS_PENDING  = 2
+local JOB_STATUS_FINISHED = 3
 
 -- get jobs size
 function jobpool:size()
@@ -35,14 +41,32 @@ function jobpool:rootjob()
     return self._rootjob
 end
 
+-- new run job
+--
+-- e.g.
+-- local job = jobpool:newjob("xxx", function (index, total) end)
+-- jobpool:add(job, rootjob1)
+-- jobpool:add(job, rootjob2)
+-- jobpool:add(job, rootjob3)
+--
+function jobpool:newjob(name, run, opt)
+    opt = opt or {}
+    return {name = name, run = run, distcc = opt.distcc, status = JOB_STATUS_FREE}
+end
+
 -- add run job to the given job node
+--
+-- e.g.
+-- local job = jobpool:addjob("xxx", function (index, total) end, {rootjob = rootjob})
 --
 -- @param name      the job name
 -- @param run       the run command/script
--- @param rootjob   the root job node (optional)
+-- @param opt       the options (rootjob, distcc)
+--                  we can support distcc build if distcc is true
 --
-function jobpool:addjob(name, run, rootjob)
-    return self:add({name = name, run = run}, rootjob)
+function jobpool:addjob(name, run, opt)
+    opt = opt or {}
+    return self:add({name = name, run = run, distcc = opt.distcc, status = JOB_STATUS_FREE}, opt.rootjob)
 end
 
 -- add job to the given job node
@@ -77,49 +101,86 @@ function jobpool:add(job, rootjob)
     return job
 end
 
--- pop job without deps at leaf node
-function jobpool:pop()
-
-    -- no jobs?
+-- get a free job from the leaf jobs
+function jobpool:getfree()
     if self:size() == 0 then
         return
     end
 
-    -- init leaf jobs first
-    local leafjobs = self._leafjobs
-    if #leafjobs == 0 then
-        local refs = {}
-        self:_genleafjobs(self:rootjob(), leafjobs, refs)
+    -- get a free job from the leaf jobs
+    local leafjobs = self:_getleafjobs()
+    if not leafjobs:empty() then
+        -- try to get next free job fastly
+        if self._nextfree then
+            local job = self._nextfree
+            local nextfree = leafjobs:prev(job)
+            if nextfree ~= job and self:_isfree(nextfree) then
+                self._nextfree = nextfree
+            else
+                self._nextfree = nil
+            end
+            job.status = JOB_STATUS_PENDING
+            return job
+        end
+        -- find the next free job
+        local removed_jobs = {}
+        for job in leafjobs:ritems() do
+            if self:_isfree(job) then
+                local nextfree = leafjobs:prev(job)
+                if nextfree ~= job and self:_isfree(nextfree) then
+                    self._nextfree = nextfree
+                end
+                job.status = JOB_STATUS_PENDING
+                return job
+            elseif job.group or job.status == JOB_STATUS_FINISHED then
+                table.insert(removed_jobs, job)
+            end
+        end
+        -- not found? if remove group and referenced node exist,
+        -- we try to remove them and find the next free job again
+        if #removed_jobs > 0 then
+            for _, job in ipairs(removed_jobs) do
+                self:remove(job)
+            end
+            for job in leafjobs:ritems() do
+                if self:_isfree(job) then
+                    local nextfree = leafjobs:prev(job)
+                    if nextfree ~= job and self:_isfree(nextfree) then
+                        self._nextfree = nextfree
+                    end
+                    job.status = JOB_STATUS_PENDING
+                    return job
+                end
+            end
+        end
     end
+end
 
-    -- pop a job from the leaf jobs
-    if #leafjobs > 0 then
+-- remove the given job from the leaf jobs
+function jobpool:remove(job)
+    assert(self:size() > 0)
+    local leafjobs = self:_getleafjobs()
+    if not leafjobs:empty() then
+        assert(job ~= self._nextfree)
 
-        -- get job
-        local job = leafjobs[#leafjobs]
-        table.remove(leafjobs, #leafjobs)
+        -- remove this job from leaf jobs
+        job.status = JOB_STATUS_FINISHED
+        leafjobs:remove(job)
 
-        -- get priority and parents node
-        local priority = job._priority or 0
+        -- get parents node
         local parents = assert(job._parents, "invalid job without parents node!")
 
         -- update all parents nodes
         for _, p in ipairs(parents) do
-            p._priority = math.max(p._priority or 0, priority + 1)
-            p._deps:remove(job)
-            if p._deps:empty() and self._size > 0 then
-                table.insert(leafjobs, 1, p)
+            -- we need to avoid adding it to leafjobs repeatly, it will cause dead-loop when poping group job
+            -- @see https://github.com/xmake-io/xmake/issues/2740
+            if not p._leaf then
+                p._deps:remove(job)
+                if p._deps:empty() and self._size > 0 then
+                    p._leaf = true
+                    leafjobs:insert_first(p)
+                end
             end
-        end
-
-        -- is group node?
-        if job.group then
-            -- pop the next real job
-            return self:pop()
-        else
-            -- pop this job
-            self._size = self._size - 1
-            return job, priority
         end
     end
 end
@@ -127,10 +188,12 @@ end
 -- enter group
 --
 -- @param name      the group name
+-- @param opt       the options, e.g. {rootjob = ..}
 --
-function jobpool:group_enter(name)
+function jobpool:group_enter(name, opt)
+    opt = opt or {}
     assert(not self._group, "jobpool: cannot enter group(%s)!", name)
-    self._group = {name = name, group = true}
+    self._group = {name = name, group = true, rootjob = opt.rootjob}
 end
 
 -- leave group
@@ -140,9 +203,34 @@ end
 function jobpool:group_leave()
     local group = self._group
     self._group = nil
-    if group and group._parents then
-        return group
+    if group then
+        if group._parents then
+            return group
+        else
+            -- we just return the rootjob if there is not any jobs in this group
+            return group.rootjob
+        end
     end
+end
+
+-- is free job?
+-- we need to ignore group node (empty job) and referenced node (finished job)
+function jobpool:_isfree(job)
+    if job and job.status == JOB_STATUS_FREE and not job.group then
+        return true
+    end
+end
+
+-- get leaf jobs
+function jobpool:_getleafjobs()
+    local leafjobs = self._leafjobs
+    if leafjobs == nil then
+        leafjobs = list.new()
+        local refs = {}
+        self:_genleafjobs(self:rootjob(), leafjobs, refs)
+        self._leafjobs = leafjobs
+    end
+    return leafjobs
 end
 
 -- generate all leaf jobs from the given job
@@ -157,7 +245,8 @@ function jobpool:_genleafjobs(job, leafjobs, refs)
             end
         end
     else
-        table.insert(leafjobs, job)
+        job._leaf = true
+        leafjobs:insert_last(job)
     end
 end
 
@@ -193,10 +282,10 @@ end
 -- tostring
 function jobpool:__tostring()
     local refs = {}
-    return string.serialize(self:_gentree(self:rootjob(), refs), {indent = 2})
+    return string.serialize(self:_gentree(self:rootjob(), refs), {indent = 2, orderkeys = true})
 end
 
 -- new a jobpool
 function new()
-    return jobpool {0, {name = "root"}, {}}
+    return jobpool {0, {name = "root"}, nil}
 end

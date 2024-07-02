@@ -43,18 +43,25 @@ function _extract_using_tar(archivefile, outputdir, extension, opt)
         return false
     end
 
-    -- on msys2/cygwin? we need translate input path to cygwin-like path
-    if is_subhost("msys", "cygwin") and program:gsub("\\", "/"):find("/usr/bin") then
-        archivefile = path.cygwin_path(archivefile)
-    end
-
     -- init argv
     local argv = {}
-    if is_subhost("windows") then
+    if is_host("windows") then
         -- force "x:\\xx" as local file
-        table.insert(argv, "--force-local")
+        local force_local = _g.force_local
+        if force_local == nil then
+            force_local = try {function ()
+                local result = os.iorunv(program, {"--help"})
+                if result and result:find("--force-local", 1, true) then
+                    return true
+                end
+            end}
+            _g.force_local = force_local or false
+        end
+        if force_local then
+            table.insert(argv, "--force-local")
+        end
     end
-    table.insert(argv, option.get("verbose") and "-xvf" or "-xf")
+    table.insert(argv, "-xf")
     table.insert(argv, archivefile)
 
     -- ensure output directory
@@ -78,14 +85,10 @@ function _extract_using_tar(archivefile, outputdir, extension, opt)
 
     -- extract it
     if is_host("windows") then
-        local oldir = os.cd(outputdir)
-        os.vrunv(program, argv)
-        os.cd(oldir)
+        os.vrunv(program, argv, {curdir = outputdir})
     else
         os.vrunv(program, argv)
     end
-
-    -- ok
     return true
 end
 
@@ -98,6 +101,13 @@ function _extract_using_7z(archivefile, outputdir, extension, opt)
         return false
     end
 
+    -- p7zip cannot extract other archive format on msys/cygwin, but it can extract .tgz
+    -- https://github.com/xmake-io/xmake/issues/1575#issuecomment-898205462
+    if is_subhost("msys", "cygwin") and program:startswith("sh ") and
+        extension ~= ".7z" and extension ~= ".tgz" then
+        return false
+    end
+
     -- extract to *.tar file first
     local outputdir_old = nil
     if extension:startswith(".tar.") or extension == ".tgz" then
@@ -105,7 +115,7 @@ function _extract_using_7z(archivefile, outputdir, extension, opt)
         outputdir = os.tmpfile({ramdisk = false}) .. ".tar"
     end
 
-    -- on msys2/cygwin? we need translate input path to cygwin-like path
+    -- on msys2/cygwin? we need to translate input path to cygwin-like path
     if is_subhost("msys", "cygwin") and program:gsub("\\", "/"):find("/usr/bin") then
         archivefile = path.cygwin_path(archivefile)
     end
@@ -140,8 +150,10 @@ function _extract_using_7z(archivefile, outputdir, extension, opt)
     -- remove unused pax_global_header file after extracting .tar file
     if extension == ".tar" then
         os.tryrm(path.join(outputdir, "pax_global_header"))
-        os.tryrm(path.join(outputdir, "PaxHeaders.*"))
+        os.tryrm(path.join(outputdir, "PaxHeaders*"))
         os.tryrm(path.join(outputdir, "@PaxHeader"))
+        -- https://github.com/xmake-io/xmake-repo/pull/2673
+        os.tryrm(path.join(outputdir, "*.paxheader"))
     end
 
     -- continue to extract *.tar file
@@ -151,8 +163,6 @@ function _extract_using_7z(archivefile, outputdir, extension, opt)
             return _extract(tarfile, outputdir_old, ".tar", {_extract_using_7z, _extract_using_tar}, opt)
         end
     end
-
-    -- ok
     return true
 end
 
@@ -192,14 +202,8 @@ function _extract_using_gzip(archivefile, outputdir, extension, opt)
         os.cp(archivefile, tmpfile)
     end
 
-    -- enter outputdir
-    local oldir = os.cd(outputdir)
-
     -- extract it
-    os.vrunv(program, argv)
-
-    -- leave outputdir
-    os.cd(oldir)
+    os.vrunv(program, argv, {curdir = outputdir})
 
     -- continue to extract *.tar file
     if outputdir_old then
@@ -208,8 +212,6 @@ function _extract_using_gzip(archivefile, outputdir, extension, opt)
             return _extract(tarfile, outputdir_old, ".tar", {_extract_using_7z, _extract_using_tar}, opt)
         end
     end
-
-    -- ok
     return true
 end
 
@@ -249,14 +251,8 @@ function _extract_using_xz(archivefile, outputdir, extension, opt)
         os.cp(archivefile, tmpfile)
     end
 
-    -- enter outputdir
-    local oldir = os.cd(outputdir)
-
     -- extract it
-    os.vrunv(program, argv)
-
-    -- leave outputdir
-    os.cd(oldir)
+    os.vrunv(program, argv, {curdir = outputdir})
 
     -- continue to extract *.tar file
     if outputdir_old then
@@ -265,8 +261,6 @@ function _extract_using_xz(archivefile, outputdir, extension, opt)
             return _extract(tarfile, outputdir_old, ".tar", {_extract_using_7z, _extract_using_tar}, opt)
         end
     end
-
-    -- ok
     return true
 end
 
@@ -320,8 +314,6 @@ function _extract_using_unzip(archivefile, outputdir, extension, opt)
             return _extract(tarfile, outputdir_old, ".tar", {_extract_using_tar, _extract_using_7z}, opt)
         end
     end
-
-    -- ok
     return true
 end
 
@@ -341,7 +333,7 @@ function _extract_using_bzip2(archivefile, outputdir, extension, opt)
         outputdir = os.tmpfile({ramdisk = false}) .. ".tar"
     end
 
-    -- on msys2/cygwin? we need translate input path to cygwin-like path
+    -- on msys2/cygwin? we need to translate input path to cygwin-like path
     if is_subhost("msys", "cygwin") and program:gsub("\\", "/"):find("/usr/bin") then
         archivefile = path.cygwin_path(archivefile)
     end
@@ -366,14 +358,8 @@ function _extract_using_bzip2(archivefile, outputdir, extension, opt)
         os.cp(archivefile, tmpfile)
     end
 
-    -- enter outputdir
-    local oldir = os.cd(outputdir)
-
     -- extract it
-    os.vrunv(program, argv)
-
-    -- leave outputdir
-    os.cd(oldir)
+    os.vrunv(program, argv, {curdir = outputdir})
 
     -- continue to extract *.tar file
     if outputdir_old then
@@ -382,23 +368,30 @@ function _extract_using_bzip2(archivefile, outputdir, extension, opt)
             return _extract(tarfile, outputdir_old, ".tar", {_extract_using_7z, _extract_using_tar}, opt)
         end
     end
-
-    -- ok
     return true
 end
 
 -- extract archive file using extractors
 function _extract(archivefile, outputdir, extension, extractors, opt)
-
-    -- extract it
+    local errors
     for _, extract in ipairs(extractors) do
-        if extract(archivefile, outputdir, extension, opt) then
+        local ok = try {
+            function ()
+                return extract(archivefile, outputdir, extension, opt)
+            end,
+            catch {
+                function (errs)
+                    if errs then
+                        errors = tostring(errs)
+                    end
+                end
+            }
+        }
+        if ok then
             return true
         end
     end
-
-    -- failed
-    return false
+    raise("cannot extract %s, %s!", path.filename(archivefile), errors or "extractors not found!")
 end
 
 -- extract archive file
@@ -408,16 +401,12 @@ end
 -- @param options       the options, e.g.. {excludes = {"*/dir/*", "dir/*"}}
 --
 function main(archivefile, outputdir, opt)
-
-    -- init outputdir
-    outputdir = outputdir or os.curdir()
-
-    -- init options
     opt = opt or {}
+    outputdir = outputdir or os.curdir()
 
     -- init extractors
     local extractors
-    if is_host("windows") then
+    if is_subhost("windows") then
         -- we use 7z first, becase xmake package has builtin 7z program on windows
         -- tar/windows can not extract .bz2 ...
         extractors =
@@ -432,11 +421,14 @@ function main(archivefile, outputdir, opt)
         ,   [".tar.gz"]     = {_extract_using_7z, _extract_using_gzip}
         ,   [".tar.xz"]     = {_extract_using_7z, _extract_using_xz}
         ,   [".tar.bz2"]    = {_extract_using_7z, _extract_using_bzip2}
+        ,   [".tar.lz"]     = {_extract_using_7z}
+        ,   [".tar.Z"]      = {_extract_using_7z}
         }
     else
         extractors =
         {
-            [".zip"]        = {_extract_using_unzip, _extract_using_tar, _extract_using_7z}
+            -- tar supports .zip on macOS but does not on Linux
+            [".zip"]        = is_host("macosx") and {_extract_using_unzip, _extract_using_tar, _extract_using_7z} or {_extract_using_unzip, _extract_using_7z}
         ,   [".7z"]         = {_extract_using_7z}
         ,   [".gz"]         = {_extract_using_gzip, _extract_using_tar, _extract_using_7z}
         ,   [".xz"]         = {_extract_using_xz, _extract_using_tar, _extract_using_7z}
@@ -446,6 +438,8 @@ function main(archivefile, outputdir, opt)
         ,   [".tar.gz"]     = {_extract_using_tar, _extract_using_7z, _extract_using_gzip}
         ,   [".tar.xz"]     = {_extract_using_tar, _extract_using_7z, _extract_using_xz}
         ,   [".tar.bz2"]    = {_extract_using_tar, _extract_using_7z, _extract_using_bzip2}
+        ,   [".tar.lz"]     = {_extract_using_tar, _extract_using_7z}
+        ,   [".tar.Z"]      = {_extract_using_tar, _extract_using_7z}
         }
     end
 

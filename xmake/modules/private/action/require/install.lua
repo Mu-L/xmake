@@ -15,7 +15,7 @@
 -- Copyright (C) 2015-present, TBOOX Open Source Group.
 --
 -- @author      ruki
--- @file        package.lua
+-- @file        install.lua
 --
 
 -- imports
@@ -35,7 +35,7 @@ function _check_missing_packages(packages)
     local packages_missing = {}
     local optional_missing = {}
     for _, instance in ipairs(packages) do
-        if package.should_install(instance) or (instance:is_fetchonly() and not instance:exists()) then
+        if package.should_install(instance, {install_finished = true}) or (instance:is_fetchonly() and not instance:exists()) then
             if instance:is_optional() then
                 optional_missing[instance:name()] = instance
             else
@@ -76,7 +76,7 @@ function main(requires_raw)
     --
     -- attempt to install git from the builtin-packages first if git not found
     --
-    if git and not repository.pulled() then
+    if git and (not repository.pulled() or option.get("upgrade")) then
         task.run("repo", {update = true})
     end
 
@@ -84,8 +84,6 @@ function main(requires_raw)
     environment.enter()
     local packages = install_packages(requires, {requires_extra = requires_extra})
     if packages then
-
-        -- check missing packages
         _check_missing_packages(packages)
     end
     environment.leave()

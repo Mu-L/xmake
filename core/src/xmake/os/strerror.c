@@ -29,7 +29,9 @@
  * includes
  */
 #include "prefix.h"
-#if !defined(TB_CONFIG_OS_WINDOWS) || defined(TB_COMPILER_LIKE_UNIX)
+#if defined(TB_CONFIG_OS_WINDOWS) && !defined(TB_COMPILER_LIKE_UNIX)
+#   include <windows.h>
+#else
 #   include <errno.h>
 #   include <string.h>
 #endif
@@ -52,6 +54,11 @@ tb_int_t xm_os_strerror(lua_State* lua)
         case TB_STATE_SYSERROR_NOT_PERM:
             strerr = "Permission denied";
             break;
+#if ((TB_VERSION_MAJOR * 100) + (TB_VERSION_MINOR * 10) + TB_VERSION_ALTER) >= 173
+        case TB_STATE_SYSERROR_NOT_ACCESS:
+            strerr = "Not access because it is busy";
+            break;
+#endif
         case TB_STATE_SYSERROR_NOT_FILEDIR:
             strerr = "No such file or directory";
             break;
@@ -63,7 +70,9 @@ tb_int_t xm_os_strerror(lua_State* lua)
     else
     {
 #if defined(TB_CONFIG_OS_WINDOWS) && !defined(TB_COMPILER_LIKE_UNIX)
-        lua_pushstring(lua, "Unknown");
+        tb_char_t strerr[128] = {0};
+        tb_snprintf(strerr, sizeof(strerr), "Unknown Error (%lu)", (tb_size_t)GetLastError());
+        lua_pushstring(lua, strerr);
 #else
         lua_pushstring(lua, strerror(errno));
 #endif

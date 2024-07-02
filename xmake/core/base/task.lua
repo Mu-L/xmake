@@ -46,7 +46,6 @@ function task.common_options()
         ,   {'D', "diagnosis", "k",  nil,   "Print lots of diagnosis information (backtrace, check info ..) only for developers."
                                         ,   "And we can append -v to get more whole information."
                                         ,   "    e.g. $ xmake -vD"                                      }
-        ,   {nil, "version",   "k",  nil,   "Print the version number and exit."                        }
         ,   {'h', "help",      "k",  nil,   "Print this help message and exit."                         }
         ,   {}
         ,   {'F', "file",      "kv", nil,   "Read a given xmake.lua file."                              }
@@ -63,17 +62,13 @@ end
 
 -- the directories of tasks
 function task._directories()
-
-    return  {   path.join(global.directory(), "plugins")
-            ,   path.join(os.programdir(), "plugins")
-            ,   path.join(os.programdir(), "actions")
-            }
+    return {path.join(global.directory(), "plugins"),
+            path.join(os.programdir(), "plugins"),
+            path.join(os.programdir(), "actions")}
 end
 
 -- translate menu
 function task._translate_menu(menu)
-
-    -- check
     assert(menu)
 
     -- the interpreter
@@ -154,7 +149,7 @@ function task._translate_menu(menu)
             end
         end
 
-        -- add common options, we need avoid repeat because the main/build task will be inserted twice
+        -- add common options, we need to avoid repeat because the main/build task will be inserted twice
         if not menu._common_options then
             for i, v in ipairs(task.common_options()) do
                 table.insert(options, i, v)
@@ -385,8 +380,6 @@ end
 
 -- get global tasks
 function task.tasks()
-
-    -- return it directly if exists
     if task._TASKS then
         return task._TASKS
     end
@@ -395,16 +388,10 @@ function task.tasks()
     local tasks = {}
     local dirs = task._directories()
     for _, dir in ipairs(dirs) do
-
-        -- get files
         local files = os.files(path.join(dir, "*", "xmake.lua"))
         if files then
             for _, filepath in ipairs(files) do
-
-                -- load task
                 local results, errors = task._load(filepath)
-
-                -- save task
                 if results then
                     table.join2(tasks, results)
                 else
@@ -413,17 +400,11 @@ function task.tasks()
             end
         end
     end
-
-    -- make task instances
     local instances = {}
     for taskname, taskinfo in pairs(tasks) do
         instances[taskname] = task.new(taskname, taskinfo)
     end
-
-    -- save it
     task._TASKS = instances
-
-    -- ok?
     return instances
 end
 
@@ -442,8 +423,6 @@ function task.menu(tasks)
         -- has task menu?
         local taskmenu = taskinst:get("menu")
         if taskmenu then
-
-            -- main?
             if taskinst:get("category") == "main" then
 
                 -- delay to load main menu
@@ -458,22 +437,15 @@ function task.menu(tasks)
                     -- make tasks for the main menu
                     mainmenu.tasks = {}
                     for name, inst in pairs(tasks) do
-
-                        -- has menu?
                         local m = inst:get("menu")
                         if m then
-
-                            -- add task
-                            mainmenu.tasks[name] =
-                            {
+                            mainmenu.tasks[name] = {
                                 category    = inst:get("category")
                             ,   shortname   = m.shortname
                             ,   description = m.description
                             }
                         end
                     end
-
-                    -- ok
                     return mainmenu
                 end
             end

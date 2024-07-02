@@ -26,24 +26,17 @@ import("core.base.privilege")
 import("privilege.sudo")
 import("uninstall")
 
--- main
 function main()
 
-    -- get the target name
-    local targetname = option.get("target")
-
     -- config it first
-    task.run("config", {target = targetname, require = "n", verbose = false})
+    local targetname = option.get("target")
+    task.run("config", {require = "n", verbose = false})
 
     -- attempt to uninstall directly
     try
     {
         function ()
-
-            -- uninstall target
             uninstall(targetname)
-
-            -- trace
             cprint("${color.success}uninstall ok!")
         end,
 
@@ -57,23 +50,17 @@ function main()
                     local ok = try
                     {
                         function ()
-
-                            -- uninstall target
                             uninstall(targetname)
-
-                            -- trace
                             cprint("${color.success}uninstall ok!")
-
-                            -- ok
                             return true
                         end
                     }
 
                     -- release privilege
                     privilege.store()
-
-                    -- ok?
-                    if ok then return end
+                    if ok then
+                        return
+                    end
                 end
 
                 -- continue to uninstall with administrator permission?
@@ -81,14 +68,17 @@ function main()
                 if sudo.has() and option.get("admin") then
 
                     -- uninstall target with administrator permission
-                    sudo.runl(path.join(os.scriptdir(), "uninstall_admin.lua"), {targetname or "__all", option.get("installdir"), option.get("prefix")})
+                    sudo.execl(path.join(os.scriptdir(), "uninstall_admin.lua"), {targetname or "__all", option.get("installdir"), option.get("prefix")})
 
                     -- trace
                     cprint("${color.success}uninstall ok!")
                     ok = true
                 end
-                if not ok and os.syserror() == os.SYSERR_NOT_PERM then
-                    wprint("please pass the --admin parameter to `xmake uninstall` to request administrator permissions!")
+                if not ok then
+                    local syserror = os.syserror()
+                    if syserror == os.SYSERR_NOT_PERM or syserror == os.SYSERR_NOT_ACCESS then
+                        wprint("please pass the --admin parameter to `xmake uninstall` to request administrator permissions!")
+                    end
                 end
                 assert(ok, "uninstall failed, %s", errors or "unknown reason")
             end

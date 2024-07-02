@@ -31,26 +31,31 @@ local string    = require("base/string")
 local process   = require("base/process")
 
 -- save original interfaces
-os._uid         = os._uid or os.uid
-os._gid         = os._gid or os.gid
-os._exit        = os._exit or os.exit
-os._mkdir       = os._mkdir or os.mkdir
-os._rmdir       = os._rmdir or os.rmdir
-os._tmpdir      = os._tmpdir or os.tmpdir
-os._setenv      = os._setenv or os.setenv
-os._getenvs     = os._getenvs or os.getenvs
-os._readlink    = os._readlink or os.readlink
+os._uid      = os._uid or os.uid
+os._gid      = os._gid or os.gid
+os._getpid   = os._getpid or os.getpid
+os._exit     = os._exit or os.exit
+os._mkdir    = os._mkdir or os.mkdir
+os._rmdir    = os._rmdir or os.rmdir
+os._touch    = os._touch or os.touch
+os._tmpdir   = os._tmpdir or os.tmpdir
+os._fscase   = os._fscase or os.fscase
+os._setenv   = os._setenv or os.setenv
+os._getenvs  = os._getenvs or os.getenvs
+os._cpuinfo  = os._cpuinfo or os.cpuinfo
+os._meminfo  = os._meminfo or os.meminfo
+os._readlink = os._readlink or os.readlink
 
 -- syserror code
 os.SYSERR_UNKNOWN     = -1
 os.SYSERR_NONE        = 0
 os.SYSERR_NOT_PERM    = 1
 os.SYSERR_NOT_FILEDIR = 2
+os.SYSERR_NOT_ACCESS  = 3
 
 -- copy single file or directory
-function os._cp(src, dst, rootdir)
-
-    -- check
+function os._cp(src, dst, rootdir, opt)
+    opt = opt or {}
     assert(src and dst)
 
     -- reserve the source directory structure if opt.rootdir is given
@@ -63,8 +68,9 @@ function os._cp(src, dst, rootdir)
         end
     end
 
-    -- is file?
-    if os.isfile(src) then
+    -- is file or link?
+    local symlink = opt.symlink
+    if os.isfile(src) or (symlink and os.islink(src)) then
 
         -- the destination is directory? append the filename
         if os.isdir(dst) or path.islastsep(dst) then
@@ -75,9 +81,18 @@ function os._cp(src, dst, rootdir)
             end
         end
 
-        -- copy file
-        if not os.cpfile(src, dst) then
-            return false, string.format("cannot copy file %s to %s, %s", src, dst, os.strerror())
+        -- copy or link file
+        if opt.force and os.isfile(dst) then
+            os.rmfile(dst)
+        end
+        if not os.cpfile(src, dst, symlink) then
+            local errors = os.strerror()
+            if symlink and os.islink(src) then
+                local reallink = os.readlink(src)
+                return false, string.format("cannot link %s(%s) to %s, %s", src, reallink, dst, errors)
+            else
+                return false, string.format("cannot copy file %s to %s, %s", src, dst, errors)
+            end
         end
     -- is directory?
     elseif os.isdir(src) then
@@ -92,26 +107,20 @@ function os._cp(src, dst, rootdir)
         end
 
         -- copy directory
-        if not os.cpdir(src, dst) then
+        if not os.cpdir(src, dst, symlink) then
             return false, string.format("cannot copy directory %s to %s,  %s", src, dst, os.strerror())
         end
-
-    -- not exists?
     else
         return false, string.format("cannot copy file %s, file not found!", src)
     end
-
-    -- ok
     return true
 end
 
 -- move single file or directory
-function os._mv(src, dst)
-
-    -- check
+function os._mv(src, dst, opt)
+    opt = opt or {}
     assert(src and dst)
 
-    -- exists file or directory?
     if os.exists(src) then
 
         -- the destination directory exists? append the filename
@@ -120,64 +129,66 @@ function os._mv(src, dst)
         end
 
         -- move file or directory
+        if opt.force and os.isfile(dst) then
+            os.rmfile(dst)
+        end
         if not os.rename(src, dst) then
             return false, string.format("cannot move %s to %s %s", src, dst, os.strerror())
         end
-    -- not exists?
     else
         return false, string.format("cannot move %s to %s, file %s not found!", src, dst, os.strerror())
     end
-
-    -- ok
     return true
 end
 
 -- remove single file or directory
 function os._rm(filedir)
-
-    -- check
     assert(filedir)
 
     -- is file or link?
     if os.isfile(filedir) or os.islink(filedir) then
-        -- remove file
         if not os.rmfile(filedir) then
             return false, string.format("cannot remove file %s %s", filedir, os.strerror())
         end
     -- is directory?
     elseif os.isdir(filedir) then
-        -- remove directory
         if not os.rmdir(filedir) then
             return false, string.format("cannot remove directory %s %s", filedir, os.strerror())
         end
     end
+    return true
+end
 
-    -- ok
+-- remove empty parent directories of this file path
+function os._rm_empty_parentdirs(filepath)
+    local parentdir = path.directory(filepath)
+    while parentdir and os.isdir(parentdir) and os.emptydir(parentdir) do
+        local ok, errors = os._rm(parentdir)
+        if not ok then
+            return false, errors
+        end
+        parentdir = path.directory(parentdir)
+    end
     return true
 end
 
 -- get the ramdisk root directory
+-- https://github.com/xmake-io/xmake/issues/3408
 function os._ramdir()
-
-    -- get root ramdir
     local ramdir_root = os._ROOT_RAMDIR
     if ramdir_root == nil then
         ramdir_root = os.getenv("XMAKE_RAMDIR")
     end
     if ramdir_root == nil then
-        if os.host() == "linux" and os.isdir("/dev/shm") then
-            ramdir_root = "/dev/shm"
-        elseif os.host() == "macosx" and os.isdir("/Volumes/RAM") then
-            -- @note we need the user to execute the command to create it.
-            -- diskutil partitionDisk `hdiutil attach -nomount ram://8388608` GPT APFS "RAM" 0
-            ramdir_root = "/Volumes/RAM"
-        end
-        if ramdir_root == nil then
-            ramdir_root = false
-        end
+        ramdir_root = false
         os._ROOT_RAMDIR = ramdir_root
     end
     return ramdir_root or nil
+end
+
+-- set on change environments callback for scheduler
+function os._sched_chenvs_set(envs)
+    os._SCHED_CHENVS = envs
 end
 
 -- set on change directory callback for scheduler
@@ -185,10 +196,15 @@ function os._sched_chdir_set(chdir)
     os._SCHED_CHDIR = chdir
 end
 
+-- notify envs have been changed
+function os._notify_envs_changed(envs)
+    if os._SCHED_CHENVS then
+        os._SCHED_CHENVS(envs)
+    end
+end
+
 -- the current host is belong to the given hosts?
 function os._is_host(host, ...)
-
-    -- no host
     if not host then
         return false
     end
@@ -203,8 +219,6 @@ end
 
 -- the current platform is belong to the given architectures?
 function os._is_arch(arch, ...)
-
-    -- no arch
     if not arch then
         return false
     end
@@ -223,6 +237,55 @@ function os._match_wildcard_pathes(v)
         return (os.filedirs(v))
     end
     return v
+end
+
+-- split too long path environment variable for windows
+--
+-- @see https://github.com/xmake-io/xmake-repo/pull/489
+-- https://stackoverflow.com/questions/34491244/environment-variable-is-too-large-on-windows-10
+--
+function os._deduplicate_pathenv(value)
+    if value and #value > 4096 then
+        local itemset = {}
+        local results = {}
+        for _, item in ipairs(path.splitenv(value)) do
+            if not itemset[item] then
+                table.insert(results, item)
+                itemset[item] = true
+            end
+        end
+        if #results > 0 then
+            value = path.joinenv(results)
+        end
+    end
+    return value
+end
+
+-- trace process for profile(stuck,trace)?
+function os._is_tracing_process()
+    local is_tracing = os._IS_TRACING_PROCESS
+    if is_tracing == nil then
+        local profile = os.getenv("XMAKE_PROFILE")
+        if profile then
+            profile = profile:trim()
+            if profile == "trace" or profile == "stuck" then
+                is_tracing = true
+            end
+        end
+        is_tracing = is_tracing or false
+        os._IS_TRACING_PROCESS = is_tracing
+    end
+    return is_tracing
+end
+
+-- run all exit callback
+function os._run_exit_cbs(ok, errors)
+    local exit_callbacks = os._EXIT_CALLBACKS
+    if exit_callbacks then
+        for _, cb in ipairs(exit_callbacks) do
+            cb(ok, errors)
+        end
+    end
 end
 
 -- match files or directories
@@ -248,6 +311,9 @@ end
 --
 function os.match(pattern, mode, callback)
 
+    -- support path instance
+    pattern = tostring(pattern)
+
     -- get the excludes
     local excludes = pattern:match("|.*$")
     if excludes then excludes = excludes:split("|", {plain = true}) end
@@ -257,18 +323,14 @@ function os.match(pattern, mode, callback)
         local _excludes = {}
         for _, exclude in ipairs(excludes) do
             exclude = path.translate(exclude)
-            exclude = exclude:gsub("([%+%.%-%^%$%(%)%%])", "%%%1")
-            exclude = exclude:gsub("%*%*", "\001")
-            exclude = exclude:gsub("%*", "\002")
-            exclude = exclude:gsub("\001", ".*")
-            exclude = exclude:gsub("\002", "[^/]*")
+            exclude = path.pattern(exclude)
             table.insert(_excludes, exclude)
         end
         excludes = _excludes
     end
 
     -- translate path and remove some repeat separators
-    pattern = path.translate(pattern:gsub("|.*$", ""))
+    pattern = path.translate((pattern:gsub("|.*$", "")))
 
     -- translate mode
     if type(mode) == "string" then
@@ -308,7 +370,7 @@ function os.match(pattern, mode, callback)
     if startpos then
         rootdir = rootdir:sub(1, startpos - 1)
     end
-    rootdir = path.directory(rootdir)
+    rootdir = path.directory(rootdir .. "_") -- patch '_' to avoid getting incorrect directory for `/foo/*`
 
     -- compute the recursion level
     --
@@ -338,7 +400,7 @@ end
 
 -- match directories
 --
--- @note only return {} without count to simplify code, e.g. unpack(os.dirs(""))
+-- @note only return {} without count to simplify code, e.g. table.unpack(os.dirs(""))
 --
 function os.dirs(pattern, callback)
     return (os.match(pattern, 'd', callback))
@@ -355,7 +417,7 @@ function os.filedirs(pattern, callback)
 end
 
 -- copy files or directories and we can reserve the source directory structure
--- e.g. os.cp("src/**.h", "/tmp/", {rootdir = "src"})
+-- e.g. os.cp("src/**.h", "/tmp/", {rootdir = "src", symlink = true})
 function os.cp(srcpath, dstpath, opt)
 
     -- check arguments
@@ -366,18 +428,21 @@ function os.cp(srcpath, dstpath, opt)
     -- reserve the source directory structure if opt.rootdir is given
     local rootdir = opt and opt.rootdir
     if rootdir then
+        rootdir = tostring(rootdir)
         if not path.is_absolute(rootdir) then
             rootdir = path.absolute(rootdir)
         end
     end
 
     -- copy files or directories
+    srcpath = tostring(srcpath)
+    dstpath = tostring(dstpath)
     local srcpathes = os._match_wildcard_pathes(srcpath)
     if type(srcpathes) == "string" then
-        return os._cp(srcpathes, dstpath, rootdir)
+        return os._cp(srcpathes, dstpath, rootdir, opt)
     else
         for _, _srcpath in ipairs(srcpathes) do
-            local ok, errors = os._cp(_srcpath, dstpath, rootdir)
+            local ok, errors = os._cp(_srcpath, dstpath, rootdir, opt)
             if not ok then
                 return false, errors
             end
@@ -387,7 +452,7 @@ function os.cp(srcpath, dstpath, opt)
 end
 
 -- move files or directories
-function os.mv(srcpath, dstpath)
+function os.mv(srcpath, dstpath, opt)
 
     -- check arguments
     if not srcpath or not dstpath then
@@ -395,12 +460,14 @@ function os.mv(srcpath, dstpath)
     end
 
     -- copy files or directories
+    srcpath = tostring(srcpath)
+    dstpath = tostring(dstpath)
     local srcpathes = os._match_wildcard_pathes(srcpath)
     if type(srcpathes) == "string" then
-        return os._mv(srcpathes, dstpath)
+        return os._mv(srcpathes, dstpath, opt)
     else
         for _, _srcpath in ipairs(srcpathes) do
-            local ok, errors = os._mv(_srcpath, dstpath)
+            local ok, errors = os._mv(_srcpath, dstpath, opt)
             if not ok then
                 return false, errors
             end
@@ -410,7 +477,7 @@ function os.mv(srcpath, dstpath)
 end
 
 -- remove files or directories
-function os.rm(filepath)
+function os.rm(filepath, opt)
 
     -- check arguments
     if not filepath then
@@ -418,14 +485,28 @@ function os.rm(filepath)
     end
 
     -- remove file or directories
+    opt = opt or {}
+    filepath = tostring(filepath)
     local filepathes = os._match_wildcard_pathes(filepath)
     if type(filepathes) == "string" then
-        return os._rm(filepathes)
+        local ok, errors = os._rm(filepathes)
+        if not ok then
+            return false, errors
+        end
+        if opt.emptydirs then
+            return os._rm_empty_parentdirs(filepathes)
+        end
     else
         for _, _filepath in ipairs(filepathes) do
             local ok, errors = os._rm(_filepath)
             if not ok then
                 return false, errors
+            end
+            if opt.emptydirs then
+                ok, errors = os._rm_empty_parentdirs(filepath)
+                if not ok then
+                    return false, errors
+                end
             end
         end
     end
@@ -433,7 +514,13 @@ function os.rm(filepath)
 end
 
 -- link file or directory to the new symfile
-function os.ln(srcpath, dstpath)
+function os.ln(srcpath, dstpath, opt)
+    opt = opt or {}
+    srcpath = tostring(srcpath)
+    dstpath = tostring(dstpath)
+    if opt.force and os.isfile(dstpath) then
+        os.rmfile(dstpath)
+    end
     if not os.link(srcpath, dstpath) then
         return false, string.format("cannot link %s to %s, %s", srcpath, dstpath, os.strerror())
     end
@@ -442,9 +529,10 @@ end
 
 -- change to directory
 function os.cd(dir)
-
-    -- check
     assert(dir)
+
+    -- support path instance
+    dir = tostring(dir)
 
     -- the previous directory
     local oldir = os.curdir()
@@ -479,11 +567,19 @@ function os.cd(dir)
 
     -- do chdir callback for scheduler
     if os._SCHED_CHDIR then
-        os._SCHED_CHDIR(oldir, os.curdir())
+        os._SCHED_CHDIR(os.curdir())
     end
-
-    -- ok
     return oldir
+end
+
+-- touch file or directory, it will modify atime/mtime or create a new file
+-- we will do not change it if atime/mtime is zero
+function os.touch(filepath, opt)
+    opt = opt or {}
+    if os._touch and not os._touch(filepath, opt.atime or 0, opt.mtime or 0) then
+        return false, string.format("cannot touch %s, %s", filepath, os.strerror())
+    end
+    return true
 end
 
 -- create directories
@@ -493,6 +589,9 @@ function os.mkdir(dir)
     if not dir then
         return false, string.format("invalid arguments!")
     end
+
+    -- support path instance
+    dir = tostring(dir)
 
     -- create directories
     local dirs = table.wrap(os._match_wildcard_pathes(dir))
@@ -511,6 +610,9 @@ function os.rmdir(dir)
     if not dir then
         return false, string.format("invalid arguments!")
     end
+
+    -- support path instance
+    dir = tostring(dir)
 
     -- remove directories
     local dirs = table.wrap(os._match_wildcard_pathes(dir))
@@ -583,9 +685,23 @@ end
 
 -- exit program
 function os.exit(...)
-
-    -- do exit
     return os._exit(...)
+end
+
+-- register exit callback
+--
+-- e.g.
+-- os.atexit(function (ok, errors)
+--     print(ok, errors)
+-- end)
+--
+function os.atexit(on_exit)
+    local exit_callbacks = os._EXIT_CALLBACKS
+    if exit_callbacks == nil then
+        exit_callbacks = {}
+        os._EXIT_CALLBACKS = exit_callbacks
+    end
+    table.insert(exit_callbacks, on_exit)
 end
 
 -- run command
@@ -611,7 +727,7 @@ function os.runv(program, argv, opt)
     local logfile = os.tmpfile()
 
     -- execute it
-    local ok, errors = os.execv(program, argv, table.join(opt, {stdout = logfile, stderr = logfile}))
+    local ok, errors = os.execv(program, argv, table.join(opt, {stdout = opt.stdout or logfile, stderr = opt.stderr or logfile}))
     if ok ~= 0 then
 
         -- get command
@@ -667,11 +783,9 @@ end
 --
 function os.execv(program, argv, opt)
 
-    -- init options
-    opt = opt or {}
-
     -- is not executable program file?
-    local filename = program
+    opt = opt or {}
+    local filename = tostring(program)
     if not os.isexec(program) then
 
         -- parse the filename and arguments, e.g. "xcrun -sdk macosx clang"
@@ -682,35 +796,111 @@ function os.execv(program, argv, opt)
         end
     end
 
+    -- run shell file? parse `#!/usr/bin/env bash` in xx.sh
+    --
+    -- e.g. os.execv("./configure", {"--help"}) => os.execv("/usr/bin/env", {"bash", "./configure", "--help"})
+    if opt.shell and os.isfile(filename) then
+        local shellfile = filename
+        local file = io.open(filename, 'r')
+        for line in file:lines() do
+            if line and line:startswith("#!") then
+                -- we cannot run `/bin/sh` directly on windows
+                -- because `/bin/sh` is not real file path, maybe we need to convert it.
+                local host = os.host()
+                if host == "windows" then
+                    filename = "sh"
+                    argv = table.join(shellfile, argv)
+                else
+                    line = line:sub(3)
+                    local shellargv = {}
+                    local splitinfo = line:split("%s")
+                    filename = splitinfo[1]
+                    if #splitinfo > 1 then
+                        shellargv = table.slice(splitinfo, 2)
+                    end
+                    table.insert(shellargv, shellfile)
+                    table.join2(shellargv, argv)
+                    argv = shellargv
+                end
+                break
+            end
+        end
+        file:close()
+    end
+
     -- uses the given environments?
     local envs = nil
-    if opt.envs then
+    local setenvs = opt.setenvs or opt.envs
+    local addenvs = opt.addenvs
+    if setenvs or addenvs then
         local envars = os.getenvs()
-        for k, v in pairs(opt.envs) do
-            -- TODO
-            if type(v) == "table" then
-                v = path.joinenv(v)
+        if setenvs then
+            for k, v in pairs(setenvs) do
+                if type(v) == "table" then
+                    v = path.joinenv(v)
+                end
+                envars[k] = v
             end
-            envars[k] = v
+        end
+        if addenvs then
+            for k, v in pairs(addenvs) do
+                if type(v) == "table" then
+                    v = path.joinenv(v)
+                end
+                local o = envars[k]
+                if o then
+                    v = v .. path.envsep() .. o
+                end
+                envars[k] = v
+            end
         end
         envs = {}
         for k, v in pairs(envars) do
+            -- we try to fix too long value before running process
+            if type(v) == "string" and #v > 4096 and os.host() == "windows" then
+                v = os._deduplicate_pathenv(v)
+            end
             table.insert(envs, k .. '=' .. v)
         end
     end
 
     -- init open options
-    local openopt = {envs = envs, stdin = opt.stdin, stdout = opt.stdout, stderr = opt.stderr, curdir = opt.curdir, detach = opt.detach}
+    local openopt = {
+        envs = envs,
+        stdin = opt.stdin,
+        stdout = opt.stdout,
+        stderr = opt.stderr,
+        curdir = opt.curdir,
+        detach = opt.detach,
+        exclusive = opt.exclusive}
 
     -- open command
     local ok = -1
+    local errors
     local proc = process.openv(filename, argv or {}, openopt)
     if proc ~= nil then
 
+        -- trace process
+        if os._is_tracing_process() then
+            -- we cannot use cprint, it will cause dead-loop on windows, winos.version/os.iorunv
+            utils.print("%s: %s %s", proc, filename, argv and os.args(argv) or "")
+        end
+
         -- wait process
-        local waitok, status = proc:wait(-1)
-        if waitok > 0 then
-            ok = status
+        if not opt.detach then
+            local waitok, status = proc:wait(opt.timeout or -1)
+            if waitok > 0 then
+                ok = status
+            elseif waitok == 0 and opt.timeout then
+                proc:kill()
+                waitok, status = proc:wait(-1)
+                if waitok > 0 then
+                    ok = status
+                end
+                errors = "wait process timeout"
+            end
+        else
+            ok = 0
         end
 
         -- close process
@@ -719,9 +909,7 @@ function os.execv(program, argv, opt)
         -- cannot execute process
         return nil, os.strerror()
     end
-
-    -- ok?
-    return ok
+    return ok, errors
 end
 
 -- run command and return output and error data
@@ -740,10 +928,8 @@ end
 -- run command with arguments and return output and error data
 function os.iorunv(program, argv, opt)
 
-    -- init options
-    opt = opt or {}
-
     -- make temporary output and error file
+    opt = opt or {}
     local outfile = os.tmpfile()
     local errfile = os.tmpfile()
 
@@ -810,8 +996,6 @@ end
 
 -- is executable program file?
 function os.isexec(filepath)
-
-    -- check
     assert(filepath)
 
     -- TODO
@@ -913,26 +1097,30 @@ end
 
 -- get uid
 function os.uid(...)
-    -- get uid
     os._UID = {}
     if os._uid then
         os._UID = os._uid(...) or {}
     end
-
-    -- ok?
     return os._UID
 end
 
 -- get gid
 function os.gid(...)
-    -- get gid
     os._GID = {}
     if os._gid then
         os._GID = os._gid(...) or {}
     end
-
-    -- ok?
     return os._GID
+end
+
+-- get pid
+function os.getpid(...)
+    local pid = os._PID
+    if pid == nil then
+        pid = os._getpid()
+        os._PID = pid
+    end
+    return pid
 end
 
 -- check the current command is running as root
@@ -941,8 +1129,24 @@ function os.isroot()
 end
 
 -- is case-insensitive filesystem?
-function os.fscase()
-    if os._FSCASE == nil then
+function os.fscase(filepath)
+    if os._FSCASE == nil or filepath then
+        if os._fscase then
+            if filepath then
+                assert(os.exists(filepath), filepath .. " not found in os.fscase()")
+            else
+                local tmpdir = os.tmpdir()
+                if not os.isdir(tmpdir) then
+                    os.mkdir(tmpdir)
+                end
+                filepath = tmpdir
+            end
+            local fscase = os._fscase(filepath)
+            if fscase ~= -1 then
+                os._FSCASE = (fscase == 1)
+                return os._FSCASE
+            end
+        end
         if os.host() == "windows" then
             os._FSCASE = false
         else
@@ -973,19 +1177,27 @@ function os.fscase()
     return os._FSCASE
 end
 
+-- get shell
+function os.shell()
+    return require("base/tty").shell()
+end
+
 -- get term
 function os.term()
     return require("base/tty").term()
 end
 
 -- get all current environment variables
+-- e.g. envs["PATH"] = "/xxx:/yyy/foo"
 function os.getenvs()
     local envs = {}
     for _, line in ipairs(os._getenvs()) do
         local p = line:find('=', 1, true)
         if p then
             local key = line:sub(1, p - 1):trim()
-            if os.host() == "windows" then
+            -- only translate Path to PATH on windows
+            -- @see https://github.com/xmake-io/xmake/issues/3752
+            if os.host() == "windows" and key:lower() == "path" then
                 key = key:upper()
             end
             local values = line:sub(p + 1):trim()
@@ -997,28 +1209,119 @@ function os.getenvs()
     return envs
 end
 
+-- set all current environment variables
+-- e.g. envs["PATH"] = "/xxx:/yyy/foo"
+function os.setenvs(envs)
+    local oldenvs = os.getenvs()
+    if envs then
+        local changed = false
+        -- remove new added values
+        for name, _ in pairs(oldenvs) do
+            if not envs[name] then
+                if os._setenv(name, "") then
+                    changed = true
+                end
+            end
+        end
+        -- change values
+        for name, values in pairs(envs) do
+            if oldenvs[name] ~= values then
+                if os._setenv(name, values) then
+                    changed = true
+                end
+            end
+        end
+        if changed then
+            os._notify_envs_changed(envs)
+        end
+    end
+    return oldenvs
+end
+
+-- add environment variables
+-- e.g. envs["PATH"] = "/xxx:/yyy/foo"
+function os.addenvs(envs)
+    local oldenvs = os.getenvs()
+    if envs then
+        local changed = false
+        for name, values in pairs(envs) do
+            local ok
+            local oldenv = oldenvs[name]
+            if oldenv == "" or oldenv == nil then
+                ok = os._setenv(name, values)
+            elseif not oldenv:startswith(values) then
+                ok = os._setenv(name, values .. path.envsep() .. oldenv)
+            end
+            if ok then
+                changed = true
+            end
+        end
+        if changed then
+            os._notify_envs_changed()
+        end
+    end
+    return oldenvs
+end
+
+-- join environment variables
+function os.joinenvs(envs, oldenvs)
+    oldenvs = oldenvs or os.getenvs()
+    local newenvs = oldenvs
+    if envs then
+        newenvs = table.copy(oldenvs)
+        for name, values in pairs(envs) do
+            local oldenv = oldenvs[name]
+            if oldenv == "" or oldenv == nil then
+                newenvs[name] = values
+            elseif not oldenv:startswith(values) then
+                newenvs[name] = values .. path.envsep() .. oldenv
+            end
+        end
+    end
+    return newenvs
+end
+
 -- set values to environment variable
 function os.setenv(name, ...)
+    local ok
     local values = {...}
     if #values <= 1 then
         -- keep compatible with original implementation
-        return os._setenv(name, values[1] or "")
+        ok = os._setenv(name, values[1] or "")
     else
-        return os._setenv(name, path.joinenv(values))
+        ok = os._setenv(name, path.joinenv(values))
     end
+    if ok then
+        os._notify_envs_changed()
+    end
+    return ok
 end
 
 -- add values to environment variable
 function os.addenv(name, ...)
     local values = {...}
     if #values > 0 then
+        local ok
+        local changed = false
         local oldenv = os.getenv(name)
         local appendenv = path.joinenv(values)
         if oldenv == "" or oldenv == nil then
-            return os._setenv(name, appendenv)
+            ok = os._setenv(name, appendenv)
+            if ok then
+                changed = true
+            end
+        elseif not oldenv:startswith(appendenv) then
+            ok = os._setenv(name, appendenv .. path.envsep() .. oldenv)
+            if ok then
+                changed = true
+            end
         else
-            return os._setenv(name, appendenv .. path.envsep() .. oldenv)
+            ok = true
         end
+        if changed then
+            os._notify_envs_changed()
+        end
+        return ok
     else
         return true
     end
@@ -1027,7 +1330,11 @@ end
 -- set values to environment variable with the given seperator
 function os.setenvp(name, values, sep)
     sep = sep or path.envsep()
-    return os._setenv(name, table.concat(table.wrap(values), sep))
+    local ok = os._setenv(name, table.concat(table.wrap(values), sep))
+    if ok then
+        os._notify_envs_changed()
+    end
+    return ok
 end
 
 -- add values to environment variable with the given seperator
@@ -1035,13 +1342,27 @@ function os.addenvp(name, values, sep)
     sep = sep or path.envsep()
     values = table.wrap(values)
     if #values > 0 then
+        local ok
+        local changed = false
         local oldenv = os.getenv(name)
         local appendenv = table.concat(values, sep)
         if oldenv == "" or oldenv == nil then
-            return os._setenv(name, appendenv)
+            ok = os._setenv(name, appendenv)
+            if ok then
+                changed = true
+            end
+        elseif not oldenv:startswith(appendenv) then
+            ok = os._setenv(name, appendenv .. sep .. oldenv)
+            if ok then
+                changed = true
+            end
         else
-            return os._setenv(name, appendenv .. sep .. oldenv)
+            ok = true
         end
+        if changed then
+            os._notify_envs_changed()
+        end
+        return ok
     else
         return true
     end
@@ -1073,6 +1394,36 @@ function os.pbcopy(data)
     else
         -- TODO
     end
+end
+
+-- get cpu info
+function os.cpuinfo(name)
+    return require("base/cpu").info(name)
+end
+
+-- get memory info
+function os.meminfo(name)
+    return require("base/memory").info(name)
+end
+
+-- get the default parallel jobs number
+function os.default_njob()
+    local njob
+    local ncpu = os.cpuinfo().ncpu
+    if ncpu > 2 then
+        njob = ncpu + 2
+        if os.host() == "windows" and njob > 128 then
+            njob = 128
+        end
+        if njob > 512 then
+            njob = 512
+        end
+    elseif ncpu == 2 then
+        njob = 3
+    else
+        njob = 2
+    end
+    return njob or 2
 end
 
 -- read the content of symlink
@@ -1107,3 +1458,4 @@ end
 
 -- return module
 return os
+

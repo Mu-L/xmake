@@ -38,6 +38,7 @@ function _make_header(filtersfile, vsinfo)
     ,   vs2015 = '14.0'
     ,   vs2017 = '15.0'
     ,   vs2019 = '16.0'
+    ,   vs2022 = '17.0'
     }
 
     -- make header
@@ -50,18 +51,77 @@ function _make_tailer(filtersfile, vsinfo)
     filtersfile:leave("</Project>")
 end
 
+-- strip dot directories, e.g. ..\..\.. => ..
+-- @see https://github.com/xmake-io/xmake/issues/2039
+function _strip_dotdirs(dir)
+    local count
+    dir, count = dir:gsub("%.%.[\\/]%.%.", "..")
+    if count > 0 then
+        dir = _strip_dotdirs(dir)
+    end
+    return dir
+end
+
 -- make filter
 function _make_filter(filepath, target, vcxprojdir)
-
-    -- make filter
-    local filter = path.relative(path.absolute(path.directory(filepath)), target.scriptdir or vcxprojdir)
-
-    -- is '.'? no filter
-    if filter and filter == '.' then
-        filter = nil
+    local filter
+    local is_plain = false
+    local filegroups = target.filegroups
+    if filegroups then
+        -- @see https://github.com/xmake-io/xmake/issues/2282
+        filepath = path.absolute(filepath)
+        local scriptdir = target.scriptdir
+        local filegroups_extraconf = target.filegroups_extraconf or {}
+        for _, filegroup in ipairs(filegroups) do
+            local extraconf = filegroups_extraconf[filegroup] or {}
+            local rootdir = extraconf.rootdir
+            assert(rootdir, "please set root directory, e.g. add_filegroups(%s, {rootdir = 'xxx'})", filegroup)
+            for _, rootdir in ipairs(table.wrap(rootdir)) do
+                if not path.is_absolute(rootdir) then
+                    rootdir = path.absolute(rootdir, scriptdir)
+                end
+                local fileitem = path.relative(filepath, rootdir)
+                local files = extraconf.files or "**"
+                local mode = extraconf.mode
+                for _, filepattern in ipairs(files) do
+                    filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
+                    if filepath:match(filepattern) then
+                        if mode == "plain" then
+                            filter = path.normalize(filegroup)
+                            is_plain = true
+                        else
+                            -- file tree mode (default)
+                            if filegroup ~= "" then
+                                filter = path.normalize(path.join(filegroup, path.directory(fileitem)))
+                            else
+                                filter = path.normalize(path.directory(fileitem))
+                            end
+                        end
+                        if filter and filter == '.' then
+                            filter = nil
+                        end
+                        goto found_filter
+                    end
+                end
+                -- stop once a rootdir matches
+                if filter then
+                    goto found_filter
+                end
+            end
+            ::found_filter::
+        end
     end
-
-    -- ok?
+    if not filter and not is_plain then
+        -- use the default filter rule
+        filter = path.relative(path.absolute(path.directory(filepath)), target.scriptdir or vcxprojdir)
+        -- @see https://github.com/xmake-io/xmake/issues/2039
+        if filter then
+            filter = _strip_dotdirs(filter)
+        end
+        if filter and filter == '.' then
+            filter = nil
+        end
+    end
     return filter
 end
 
@@ -71,7 +131,7 @@ function _make_filters(filtersfile, vsinfo, target, vcxprojdir)
     -- add filters
     filtersfile:enter("<ItemGroup>")
         local exists = {}
-        for _, filepath in pairs(table.join(target.sourcefiles, target.headerfiles)) do
+        for _, filepath in pairs(table.join(target.sourcefiles, target.headerfiles or {}, target.extrafiles)) do
             local filter = _make_filter(filepath, target, vcxprojdir)
             while filter and filter ~= '.' do
                 if not exists[filter] then
@@ -94,10 +154,15 @@ function _make_sources(filtersfile, vsinfo, target, vcxprojdir)
         for _, sourcefile in ipairs(target.sourcefiles) do
             local filter = _make_filter(sourcefile, target, vcxprojdir)
             if filter then
-                local as = sourcefile:endswith(".asm")
-                filtersfile:enter("<%s Include=\"%s\">", (as and "CustomBuild" or "ClCompile"), path.relative(path.absolute(sourcefile), vcxprojdir))
+                local nodename
+                local ext = path.extension(sourcefile)
+                if ext == "asm" then nodename = "CustomBuild"
+                elseif ext == "cu" then nodename = "CudaCompile"
+                else nodename = "ClCompile"
+                end
+                filtersfile:enter("<%s Include=\"%s\">", nodename, path.relative(path.absolute(sourcefile), vcxprojdir))
                 filtersfile:print("<Filter>%s</Filter>", filter)
-                filtersfile:leave("</%s>", (as and "CustomBuild" or "ClCompile"))
+                filtersfile:leave("</%s>", nodename)
             end
             local pcheader = target.pcxxheader or target.pcheader
             if pcheader then
@@ -112,15 +177,13 @@ function _make_sources(filtersfile, vsinfo, target, vcxprojdir)
     filtersfile:leave("</ItemGroup>")
 end
 
--- make headers
-function _make_headers(filtersfile, vsinfo, target, vcxprojdir)
-
-    -- and headers
+-- make includes
+function _make_includes(filtersfile, vsinfo, target, vcxprojdir)
     filtersfile:enter("<ItemGroup>")
-        for _, headerfile in ipairs(target.headerfiles) do
-            local filter = _make_filter(headerfile, target, vcxprojdir)
+        for _, includefile in ipairs(table.join(target.headerfiles or {}, target.extrafiles)) do
+            local filter = _make_filter(includefile, target, vcxprojdir)
             if filter then
-                filtersfile:enter("<ClInclude Include=\"%s\">", path.relative(path.absolute(headerfile), vcxprojdir))
+                filtersfile:enter("<ClInclude Include=\"%s\">", path.relative(path.absolute(includefile), vcxprojdir))
                 filtersfile:print("<Filter>%s</Filter>", filter)
                 filtersfile:leave("</ClInclude>")
             end
@@ -153,8 +216,8 @@ function make(vsinfo, target)
     -- make sources
     _make_sources(filtersfile, vsinfo, target, vcxprojdir)
 
-    -- make headers
-    _make_headers(filtersfile, vsinfo, target, vcxprojdir)
+    -- make includes
+    _make_includes(filtersfile, vsinfo, target, vcxprojdir)
 
     -- make tailer
     _make_tailer(filtersfile, vsinfo)

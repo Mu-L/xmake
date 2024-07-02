@@ -93,6 +93,7 @@ function sandbox_core_sandbox.interactive()
     public_scope["$interactive_dump"] = sandbox_core_sandbox._interactive_dump
     public_scope["$interactive_prompt"] = colors.translate("${color.interactive.prompt}${text.interactive.prompt} ")
     public_scope["$interactive_prompt2"] = colors.translate("${color.interactive.prompt2}${text.interactive.prompt2} ")
+    public_scope["$interactive_setfenv"] = setfenv
 
     -- disable scheduler
     scheduler:enable(false)
@@ -126,15 +127,16 @@ end
 
 -- get the filter of the current sandbox for the given script
 function sandbox_core_sandbox.filter(script)
-
-    -- get the current sandbox instance
     local instance = sandbox.instance(script)
     if not instance then
         raise("cannot get sandbox instance!")
     end
-
-    -- get it
     return instance:filter()
+end
+
+-- get all builtin modules
+function sandbox_core_sandbox.builtin_modules()
+    return sandbox.builtin_modules()
 end
 
 -- return module

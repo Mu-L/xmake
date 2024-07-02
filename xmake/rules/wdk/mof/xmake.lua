@@ -28,7 +28,7 @@ rule("wdk.mof")
     set_extensions(".mof")
 
     -- before load
-    before_load(function (target)
+    on_load(function (target)
 
         -- imports
         import("core.project.config")
@@ -73,7 +73,7 @@ rule("wdk.mof")
         import("core.base.option")
         import("core.theme.theme")
         import("core.project.depend")
-        import("private.utils.progress")
+        import("utils.progress")
 
         -- get mofcomp
         local mofcomp = target:data("wdk.mofcomp")
@@ -102,7 +102,7 @@ rule("wdk.mof")
 
         -- need build this object?
         local dependfile = target:dependfile(headerfile)
-        local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+        local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile) or {})
         if not depend.is_changed(dependinfo, {lastmtime = os.mtime(headerfile), values = args}) then
             return
         end

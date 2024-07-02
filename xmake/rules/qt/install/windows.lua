@@ -23,31 +23,43 @@ import("core.base.option")
 import("core.project.config")
 import("core.tool.toolchain")
 import("lib.detect.find_path")
+import("detect.sdks.find_qt")
+
+-- get install directory
+function _get_installdir(target)
+    local installdir = assert(target:installdir(), "please use `xmake install -o installdir` or `set_installdir` to set install directory on windows.")
+    return installdir
+end
 
 -- install application package for windows
 function main(target, opt)
 
     local targetfile = target:targetfile()
-    local installfile = path.join(target:installdir(), "bin", path.filename(targetfile))
-    
+    local installdir = _get_installdir(target)
+    local installfile = path.join(installdir, "bin", path.filename(targetfile))
+
     -- get qt sdk
-    local qt = target:data("qt")
+    local qt = assert(find_qt(), "Qt SDK not found!")
 
     -- get windeployqt
     local windeployqt = path.join(qt.bindir, "windeployqt.exe")
     assert(os.isexec(windeployqt), "windeployqt.exe not found!")
 
     -- find qml directory
-    local qmldir = nil
-    for _, sourcebatch in pairs(target:sourcebatches()) do
-        if sourcebatch.rulename == "qt.qrc" then
-            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                qmldir = find_path("*.qml", path.directory(sourcefile))
-                if qmldir then
-                    break
+    local qmldir = target:values("qt.deploy.qmldir")
+    if not qmldir then
+        for _, sourcebatch in pairs(target:sourcebatches()) do
+            if sourcebatch.rulename == "qt.qrc" then
+                for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
+                    qmldir = find_path("*.qml", path.directory(sourcefile))
+                    if qmldir then
+                        break
+                    end
                 end
             end
         end
+    else
+        qmldir = path.join(target:scriptdir(), qmldir)
     end
 
     -- find msvc to set VCINSTALLDIR env
@@ -57,6 +69,16 @@ function main(target, opt)
         local vcvars = msvc:config("vcvars")
         if vcvars and vcvars.VCInstallDir then
             envs = {VCINSTALLDIR = vcvars.VCInstallDir}
+        end
+    end
+    -- bind qt bin path
+    -- https://github.com/xmake-io/xmake/issues/4297
+    if qt.bindir then
+        envs = envs or {}
+        envs.PATH = {qt.bindir}
+        local curpath = os.getenv("PATH")
+        if curpath then
+            table.join2(envs.PATH, path.splitenv(curpath))
         end
     end
 
@@ -78,6 +100,13 @@ function main(target, opt)
     if qmldir then
         table.insert(argv, "--qmldir=" .. qmldir)
     end
+
+    -- add user flags
+    local user_flags = target:values("qt.deploy.flags") or {}
+    if user_flags then
+        argv = table.join(argv, user_flags)
+    end
+
     table.insert(argv, installfile)
 
     os.vrunv(windeployqt, argv, {envs = envs})

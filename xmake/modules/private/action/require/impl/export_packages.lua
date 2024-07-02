@@ -19,31 +19,37 @@
 --
 
 -- imports
+import("core.package.package", {alias = "core_package"})
 import("private.action.require.impl.package")
 
 -- export packages
 function main(requires, opt)
-
-    -- init options
     opt = opt or {}
-
-    -- get the export directory
-    local exportdir = assert(opt.exportdir)
-
-    -- export all packages
     local packages = {}
+    local packagedir = assert(opt.packagedir)
     for _, instance in ipairs(package.load_packages(requires, opt)) do
 
-        -- get the exported name
-        local name = instance:name():lower():gsub("::", "_")
-        if instance:version_str() then
-            name = name .. "_" .. instance:version_str()
+        -- get export path
+        local installdir = instance:installdir()
+        local rootdir = core_package.installdir()
+        local exportpath, count = installdir:replace(rootdir, packagedir, {plain = true})
+        if count == 0 and instance:is_binary_embed() then
+            -- maybe local binary embed package
+            -- @see https://github.com/xmake-io/xmake/issues/3470
+            local name = instance:name()
+            installdir = instance:scriptdir()
+            if installdir:endswith(path.join(name:sub(1, 1), name)) then
+                rootdir = path.directory(path.directory(installdir))
+                exportpath, count = installdir:replace(rootdir, packagedir, {plain = true})
+            end
         end
-        name = name .. "_" .. instance:buildhash()
 
         -- export this package
-        if instance:fetch() then
-            os.cp(instance:installdir(), path.join(exportdir, name))
+        if exportpath and count == 1 and instance:fetch({force = true}) then
+            print("exporting %s-%s %s", instance:displayname(), instance:version_str(), package.get_configs_str(instance))
+            cprint("  ${yellow}->${clear} %s", exportpath)
+            os.cp(installdir, exportpath, {symlink = true})
+            os.tryrm(path.join(exportpath, "references.txt"))
             table.insert(packages, instance)
         end
     end

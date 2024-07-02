@@ -18,7 +18,6 @@
 -- @file        xmake.lua
 --
 
--- define rule
 rule("xcode.storyboard")
 
     -- support add_files("*.storyboard")
@@ -32,7 +31,7 @@ rule("xcode.storyboard")
         import("core.theme.theme")
         import("core.project.depend")
         import("core.tool.toolchain")
-        import("private.utils.progress")
+        import("utils.progress")
 
         -- get xcode sdk directory
         local xcode_sdkdir = assert(get_config("xcode"), "xcode not found!")
@@ -46,7 +45,7 @@ rule("xcode.storyboard")
 
         -- need re-compile it?
         local dependfile = target:dependfile(sourcefile)
-        local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+        local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile) or {})
         if not depend.is_changed(dependinfo, {lastmtime = os.mtime(dependfile)}) then
             return
         end
@@ -56,6 +55,7 @@ rule("xcode.storyboard")
 
         -- clear Base.lproj first
         os.tryrm(base_lproj)
+        os.mkdir(base_lproj)
 
         -- do compile
         local target_minver = nil
@@ -65,8 +65,16 @@ rule("xcode.storyboard")
         end
         local argv = {"--errors", "--warnings", "--notices", "--auto-activate-custom-fonts", "--output-format", "human-readable-text"}
         if target:is_plat("macosx") then
-            table.insert(argv, "--target-device")
-            table.insert(argv, "mac")
+            local xcode = target:toolchain("xcode")
+            if xcode and xcode:config("appledev") == "catalyst" then
+                table.insert(argv, "--platform")
+                table.insert(argv, "macosx")
+                table.insert(argv, "--target-device")
+                table.insert(argv, "ipad")
+            else
+                table.insert(argv, "--target-device")
+                table.insert(argv, "mac")
+            end
         elseif target:is_plat("iphoneos") then
             table.insert(argv, "--target-device")
             table.insert(argv, "iphone")

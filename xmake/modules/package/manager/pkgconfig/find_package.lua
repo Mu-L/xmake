@@ -20,7 +20,7 @@
 
 -- imports
 import("lib.detect.pkgconfig")
-import("lib.detect.find_library")
+import("private.core.base.is_cross")
 import("package.manager.system.find_package", {alias = "find_package_from_system"})
 
 -- find package from the pkg-config package manager
@@ -29,9 +29,10 @@ import("package.manager.system.find_package", {alias = "find_package_from_system
 -- @param opt   the options, e.g. {verbose = true, version = "1.12.x")
 --
 function main(name, opt)
-
-    -- init options
     opt = opt or {}
+    if is_cross(opt.plat, opt.arch) then
+        return
+    end
 
     -- get library info
     local libinfo = pkgconfig.libinfo(name, opt)
@@ -51,13 +52,18 @@ function main(name, opt)
         end
     end
 
-    -- get result
+    -- get result, libinfo may be empty body, but it's also valid
+    -- @see https://github.com/xmake-io/xmake/issues/3777#issuecomment-1568453316
     local result = nil
-    if libinfo.links or libinfo.includedirs then
+    if libinfo then
         result             = result or {}
         result.includedirs = libinfo.includedirs
         result.linkdirs    = libinfo.linkdirs
         result.links       = libinfo.links
+        result.defines     = libinfo.defines
+        result.cxflags     = libinfo.cxflags
+        result.ldflags     = libinfo.ldflags
+        result.shflags     = libinfo.shflags
         result.version     = libinfo.version
     end
     return result

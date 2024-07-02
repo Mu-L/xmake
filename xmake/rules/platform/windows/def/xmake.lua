@@ -21,15 +21,26 @@
 -- add *.def for windows/dll
 rule("platform.windows.def")
     set_extensions(".def")
-    on_config("windows", function (target)
-        local _, toolname = target:tool("ld")
-        if toolname == "link" then
-            for _, sourcebatch in pairs(target:sourcebatches()) do
-                if sourcebatch.rulename == "platform.windows.def" then
-                    for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                        target:add("shflags", "/def:" .. path.translate(sourcefile), {force = true})
-                    end
+    on_config("windows", "mingw", function (target)
+        if not target:is_shared() then
+            return
+        end
+
+        if target:is_plat("windows") and (not target:has_tool("sh", "link")) then
+            return
+        end
+
+        local sourcebatch = target:sourcebatches()["platform.windows.def"]
+        if sourcebatch then
+            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
+                local flag = path.translate(sourcefile)
+                if target:is_plat("windows") then
+                    flag = "/def:" .. flag
                 end
+                -- https://github.com/xmake-io/xmake/pull/4901
+                target:add("shflags", flag, {force = true})
+                target:data_add("linkdepfiles", sourcefile)
+                break;
             end
         end
     end)

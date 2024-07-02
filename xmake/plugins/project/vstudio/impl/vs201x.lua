@@ -20,6 +20,9 @@
 
 -- imports
 import("core.base.option")
+import("core.base.colors")
+import("core.base.hashset")
+import("core.project.rule")
 import("core.project.config")
 import("core.project.project")
 import("core.platform.platform")
@@ -29,29 +32,142 @@ import("core.tool.toolchain")
 import("vs201x_solution")
 import("vs201x_vcxproj")
 import("vs201x_vcxproj_filters")
+import("vsutils")
 import("core.cache.memcache")
 import("core.cache.localcache")
 import("private.action.require.install", {alias = "install_requires"})
+import("private.action.run.runenvs")
 import("actions.config.configfiles", {alias = "generate_configfiles", rootdir = os.programdir()})
-import("actions.config.configheader", {alias = "generate_configheader", rootdir = os.programdir()})
+import("private.utils.batchcmds")
+import("private.utils.rule_groups")
+import("plugins.project.utils.target_cmds", {rootdir = os.programdir()})
 
--- clear cache configuration
-function _clear_cacheconf()
-    config.clear()
-    config.save()
-    localcache.clear("config")
+function _translate_path(dir, vcxprojdir)
+    if dir == nil then
+        return ""
+    end
+    if type(dir) == "string" then
+        dir = path.translate(dir)
+        if dir == "" then
+            return ""
+        end
+        if path.is_absolute(dir) then
+            if dir:startswith(project.directory()) then
+                return vsutils.escape(path.relative(dir, vcxprojdir))
+            end
+            return vsutils.escape(dir)
+        else
+            return vsutils.escape(path.relative(path.absolute(dir), vcxprojdir))
+        end
+    end
+    local r = {}
+    for k, v in ipairs(dir) do
+        r[k] = _translate_path(v, vcxprojdir)
+    end
+    r = table.unique(r)
+    return path.joinenv(r)
+end
+
+-- clear cache
+function _clear_cache()
     localcache.clear("detect")
     localcache.clear("option")
     localcache.clear("package")
     localcache.clear("toolchain")
+
+    -- force recheck
+    localcache.set("config", "recheck", true)
+
     localcache.save()
 end
 
+-- get c++ modules rules
+function _get_cxxmodules_rules()
+    return {"c++.build.modules", "c++.build.modules.builder"}
+end
+
+-- get command string
+function _get_command_string(cmd, vcxprojdir)
+    local kind = cmd.kind
+    local opt = cmd.opt
+    if cmd.program then
+        local argv = {}
+        for _, v in ipairs(table.join(cmd.program, cmd.argv)) do
+            if path.instance_of(v) then
+                v = v:clone():set(_translate_path(v:rawstr(), vcxprojdir)):str()
+            elseif path.is_absolute(v) then
+                v = _translate_path(v, vcxprojdir)
+            end
+            table.insert(argv, v)
+        end
+        local command = os.args(argv)
+        if opt and opt.curdir then
+            command = string.format("pushd \"%s\"\n%s\npopd", _translate_path(opt.curdir, vcxprojdir), command)
+        end
+        return command
+    elseif kind == "cp" then
+        return string.format("copy /Y \"%s\" \"%s\"", _translate_path(cmd.srcpath, vcxprojdir), _translate_path(cmd.dstpath, vcxprojdir))
+    elseif kind == "rm" then
+        return string.format("del /F /Q \"%s\" || rmdir /S /Q \"%s\"", _translate_path(cmd.filepath, vcxprojdir), _translate_path(cmd.filepath, vcxprojdir))
+    elseif kind == "rmdir" then
+        return string.format("rmdir /S /Q \"%s\"", _translate_path(cmd.filepath, vcxprojdir))
+    elseif kind == "mv" then
+        return string.format("rename \"%s\" \"%s\"", _translate_path(cmd.srcpath, vcxprojdir), _translate_path(cmd.dstpath, vcxprojdir))
+    elseif kind == "cd" then
+        return string.format("cd \"%s\"", _translate_path(cmd.dir, vcxprojdir))
+    elseif kind == "mkdir" then
+        local dir = _translate_path(cmd.dir, vcxprojdir)
+        return string.format("if not exist \"%s\" mkdir \"%s\"", dir, dir)
+    elseif kind == "show" then
+        return string.format("echo %s", colors.ignore(cmd.showtext))
+    end
+end
+
+-- make custom commands
+function _make_custom_commands(target, vcxprojdir)
+    -- https://github.com/xmake-io/xmake/issues/2337
+    target:data_set("plugin.project.kind", "vs")
+    -- https://github.com/xmake-io/xmake/issues/2258
+    target:data_set("plugin.project.translate_path", function (p)
+        return _translate_path(p, vcxprojdir)
+    end)
+
+    -- build sourcebatch groups first
+    local sourcegroups = rule_groups.build_sourcebatch_groups(target, target:sourcebatches())
+
+    -- ignore c++ modules rules
+    local ignored_rules = _get_cxxmodules_rules()
+
+    -- add before commands
+    -- we use irpairs(groups), because the last group that should be given the highest priority.
+    local cmds_before = {}
+    target_cmds.get_target_buildcmd(target, cmds_before, {suffix = "before", ignored_rules = ignored_rules})
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {suffix = "before", ignored_rules = ignored_rules})
+    -- rule.on_buildcmd_files should also be executed before building the target, as cmake PRE_BUILD does not work.
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {ignored_rules = ignored_rules})
+
+    -- add after commands
+    local cmds_after = {}
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_after, sourcegroups, {suffix = "after", ignored_rules = ignored_rules})
+    target_cmds.get_target_buildcmd(target, cmds_after, {suffix = "after", ignored_rules = ignored_rules})
+
+    local commands = {}
+    for _, cmd in ipairs(cmds_before) do
+        commands.before = commands.before or {}
+        table.insert(commands.before, _get_command_string(cmd, vcxprojdir))
+    end
+    for _, cmd in ipairs(cmds_after) do
+        commands.after = commands.after or {}
+        table.insert(commands.after, _get_command_string(cmd, vcxprojdir))
+    end
+    return commands
+end
+
 -- make target info
-function _make_targetinfo(mode, arch, target)
+function _make_targetinfo(mode, arch, target, vcxprojdir)
 
     -- init target info
-    local targetinfo = { mode = mode, arch = (arch == "x86" and "Win32" or "x64") }
+    local targetinfo = { mode = mode, arch = vsutils.vsarch(arch) }
 
     -- get sdk version
     local msvc = toolchain.load("msvc")
@@ -68,11 +184,20 @@ function _make_targetinfo(mode, arch, target)
     target:set("pcheader", nil)
     target:set("pcxxheader", nil)
 
+    -- save languages
+    targetinfo.languages = table.wrap(target:get("languages"))
+
     -- save symbols
     targetinfo.symbols = target:get("symbols")
 
+    -- has modules
+    targetinfo.has_modules = target:data("cxx.has_modules")
+
     -- save target kind
     targetinfo.targetkind = target:kind()
+    if target:is_phony() or target:is_headeronly() then
+        return targetinfo
+    end
 
     -- save target file
     targetinfo.targetfile = target:targetfile()
@@ -80,8 +205,8 @@ function _make_targetinfo(mode, arch, target)
     -- save symbol file
     targetinfo.symbolfile = target:symbolfile()
 
-    -- save sourcebatches
-    targetinfo.sourcebatches = target:sourcebatches()
+    -- save sourcekinds
+    targetinfo.sourcekinds = target:sourcekinds()
 
     -- save target dir
     targetinfo.targetdir = target:targetdir()
@@ -93,23 +218,87 @@ function _make_targetinfo(mode, arch, target)
     local firstcompflags = nil
     targetinfo.compflags = {}
     targetinfo.compargvs = {}
-    for _, sourcebatch in pairs(target:sourcebatches()) do
+    local sourcebatches = target:sourcebatches()
+    for _, sourcebatch in table.orderpairs(sourcebatches) do
         local sourcekind = sourcebatch.sourcekind
+        local rulename = sourcebatch.rulename
         if sourcekind then
-            for idx, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                local compflags = compiler.compflags(sourcefile, {target = target})
-                if not firstcompflags and (sourcekind == "cc" or sourcekind == "cxx") then
+            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
+                local compflags = compiler.compflags(sourcefile, {target = target, sourcekind = sourcekind})
+                if not firstcompflags and (rulename == "c.build" or rulename == "c++.build" or rulename == "c++.build.modules" or rulename == "cuda.build") then
                     firstcompflags = compflags
                 end
                 targetinfo.compflags[sourcefile] = compflags
                 targetinfo.compargvs[sourcefile] = table.join(compiler.compargv("__sourcefile__", "__objectfile__", {sourcekind = sourcekind, target = target}))
+
+                -- detect manifest
+                -- @see https://github.com/xmake-io/xmake/issues/2176
+                if sourcekind == "mrc" and os.isfile(sourcefile) then
+                    local resoucedata = io.readfile(sourcefile)
+                    if resoucedata and resoucedata:find("RT_MANIFEST") then
+                        targetinfo.manifest_embed = false
+                    end
+                end
             end
         end
     end
 
+    -- save sourcebatches
+    targetinfo.sourcebatches = target:sourcebatches()
+
     -- save linker flags
-    local linkflags = linker.linkflags(target:kind(), target:sourcekinds(), {target = target})
+    local linkflags = linker.linkflags(target:is_moduleonly() and 'static' or target:kind(), target:sourcekinds(), {target = target})
     targetinfo.linkflags = linkflags
+
+    if table.contains(target:sourcekinds(), "cu") then
+        -- save cuda linker flags
+        local linkinst = linker.load("gpucode", "cu", {target = target})
+        targetinfo.culinkflags = linkinst:linkflags({target = target})
+
+        -- save cuda devlink status
+        targetinfo.cudevlink = target:policy("build.cuda.devlink") or target:values("cuda.build.devlink")
+    end
+
+    -- save execution dir (when executed from VS)
+    targetinfo.rundir = target:is_moduleonly() and "" or target:rundir()
+
+    -- save runenvs
+    local targetrunenvs = {}
+    local addrunenvs, setrunenvs = runenvs.make(target)
+    for k, v in table.orderpairs(target:pkgenvs()) do
+        addrunenvs = addrunenvs or {}
+        addrunenvs[k] = table.join(table.wrap(addrunenvs[k]), path.splitenv(v))
+    end
+    for _, dep in ipairs(target:orderdeps()) do
+        for k, v in table.orderpairs(dep:pkgenvs()) do
+            addrunenvs = addrunenvs or {}
+            addrunenvs[k] = table.join(table.wrap(addrunenvs[k]), path.splitenv(v))
+        end
+    end
+    for k, v in table.orderpairs(addrunenvs) do
+        if k:upper() == "PATH" then
+            targetrunenvs[k] = _translate_path(v, vcxprojdir) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .. "'))"
+        else
+            targetrunenvs[k] = path.joinenv(v) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .."'))"
+        end
+    end
+    for k, v in table.orderpairs(setrunenvs) do
+        if #v == 1 then
+            v = v[1]
+            if path.is_absolute(v) and v:startswith(project.directory()) then
+                targetrunenvs[k] = _translate_path(v, vcxprojdir)
+            else
+                targetrunenvs[k] = v[1]
+            end
+        else
+            targetrunenvs[k] = path.joinenv(v)
+        end
+    end
+    local runenvstr = {}
+    for k, v in table.orderpairs(targetrunenvs) do
+        table.insert(runenvstr, k .. "=" .. v)
+    end
+    targetinfo.runenvs = table.concat(runenvstr, "\n")
 
     -- use mfc? save the mfc runtime kind
     if target:rule("win.sdk.mfc.shared_app") or target:rule("win.sdk.mfc.shared") then
@@ -126,59 +315,9 @@ function _make_targetinfo(mode, arch, target)
         end
     end
 
-    -- ok
+    -- save custom commands
+    targetinfo.commands = _make_custom_commands(target, vcxprojdir)
     return targetinfo
-end
-
--- make target headers
-function _make_targetheaders(mode, arch, target, last)
-
-    -- only for static and shared target
-    local kind = target:kind()
-    if kind == "static" or kind == "shared" then
-
-        -- TODO make headers, (deprecated)
-        local srcheaders, dstheaders = target:headers()
-        if srcheaders and dstheaders then
-            local i = 1
-            for _, srcheader in ipairs(srcheaders) do
-                local dstheader = dstheaders[i]
-                if dstheader then
-                    os.cp(srcheader, dstheader)
-                end
-                i = i + 1
-            end
-        end
-
-        -- make config header
-        local configheader_raw = target:configheader()
-        if configheader_raw and os.isfile(configheader_raw) then
-
-            -- init the config header path for each mode and arch
-            local configheader_mode_arch = path.join(path.directory(configheader_raw), mode .. "." .. arch .. "." .. path.filename(configheader_raw))
-
-            -- init the temporary config header path
-            local configheader_tmp = path.join(path.directory(configheader_raw), "tmp." .. path.filename(configheader_raw))
-
-            -- copy the original config header first
-            os.cp(configheader_raw, configheader_mode_arch)
-
-            -- append the current config header
-            local file = io.open(configheader_tmp, "a+")
-            if file then
-                file:print("")
-                file:print("#if defined(__config_%s__) && defined(__config_%s__)", mode, arch)
-                file:print("#    include \"%s.%s.%s\"", mode, arch, path.filename(configheader_raw))
-                file:print("#endif")
-                file:close()
-            end
-
-            -- override the raw config header at last
-            if last and os.isfile(configheader_tmp) then
-                os.mv(configheader_tmp, configheader_raw)
-            end
-        end
-    end
 end
 
 function _make_vsinfo_modes()
@@ -212,35 +351,37 @@ function _make_vsinfo_archs()
         end
     else
         -- we use it first if global set_arch("xx") is setted in xmake.lua
-        vsinfo_archs = project.get("target.arch") or platform.archs()
+        vsinfo_archs = project.get("target.arch")
+        if not vsinfo_archs then
+            -- for set_allowedarchs()
+            local allowed_archs = project.allowed_archs(config.plat())
+            if allowed_archs then
+                vsinfo_archs = allowed_archs:to_array()
+            end
+        end
+        if not vsinfo_archs then
+            local default_archs = toolchain.load("msvc"):config("vcarchs")
+            if not default_archs then
+                default_archs = platform.archs()
+            end
+            if default_archs then
+                default_archs = hashset.from(table.wrap(default_archs))
+                -- just generate single arch by default to avoid some fails for installing packages.
+                -- @see https://github.com/xmake-io/xmake/issues/3268
+                local arch = config.arch()
+                if default_archs:has(arch) then
+                    vsinfo_archs = { arch }
+                else
+                    default_archs:remove("arm64")
+                    vsinfo_archs = default_archs:to_array()
+                end
+            end
+        end
     end
     if not vsinfo_archs or #vsinfo_archs == 0 then
         vsinfo_archs = { config.arch() }
     end
     return vsinfo_archs
-end
-
--- config target
-function _config_target(target)
-    for _, rule in ipairs(target:orderules()) do
-        local on_config = rule:script("config")
-        if on_config then
-            on_config(target)
-        end
-    end
-    local on_config = target:script("config")
-    if on_config then
-        on_config(target)
-    end
-end
-
--- config targets
-function _config_targets()
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_enabled() then
-            _config_target(target)
-        end
-    end
 end
 
 -- make vstudio project
@@ -281,57 +422,87 @@ function make(outputdir, vsinfo)
 
                 -- clear cache
                 memcache.clear()
-                localcache.clear("config")
                 localcache.clear("detect")
                 localcache.clear("option")
                 localcache.clear("package")
                 localcache.clear("toolchain")
+                localcache.clear("cxxmodules")
 
                 -- check platform
                 platform.load(config.plat(), arch):check()
 
                 -- check project options
-                project.check()
+                project.check_options()
 
                 -- install and update requires
                 install_requires()
 
-                -- config targets
-                _config_targets()
+                -- load targets
+                project.load_targets()
 
                 -- update config files
                 generate_configfiles()
-                generate_configheader()
             end
 
             -- ensure to enter project directory
             os.cd(project.directory())
 
             -- save targets
-            for targetname, target in pairs(project.targets()) do
-                if not target:is_phony() then
+            for targetname, target in table.orderpairs(project.targets()) do
 
-                    -- make target with the given mode and arch
-                    targets[targetname] = targets[targetname] or {}
-                    local _target = targets[targetname]
+                -- make target with the given mode and arch
+                targets[targetname] = targets[targetname] or {}
+                local _target = targets[targetname]
 
-                    -- save c/c++ precompiled header
-                    _target.pcheader   = target:pcheaderfile("c")     -- header.h
-                    _target.pcxxheader = target:pcheaderfile("cxx")   -- header.[hpp|inl]
+                -- the vcxproj directory
+                _target.project_dir = path.join(vsinfo.solution_dir, targetname)
 
-                    -- init target info
-                    _target.name = targetname
-                    _target.kind = target:kind()
-                    _target.scriptdir = target:scriptdir()
-                    _target.info = _target.info or {}
-                    table.insert(_target.info, _make_targetinfo(mode, arch, target))
+                -- save c/c++ precompiled header
+                _target.pcheader   = target:pcheaderfile("c")     -- header.h
+                _target.pcxxheader = target:pcheaderfile("cxx")   -- header.[hpp|inl]
 
-                    -- save all sourcefiles and headerfiles
-                    _target.sourcefiles = table.unique(table.join(_target.sourcefiles or {}, (target:sourcefiles())))
-                    _target.headerfiles = table.unique(table.join(_target.headerfiles or {}, (target:headerfiles())))
+                -- init target info
+                _target.name = targetname
+                _target.kind = target:kind()
+                _target.scriptdir = target:scriptdir()
+                _target.info = _target.info or {}
+                table.insert(_target.info, _make_targetinfo(mode, arch, target, _target.project_dir))
 
-                    -- make target headers
-                    _make_targetheaders(mode, arch, target, mode_idx == #vsinfo.modes and arch_idx == 2)
+                -- save all sourcefiles and headerfiles
+                _target.sourcefiles = table.unique(table.join(_target.sourcefiles or {}, (target:sourcefiles())))
+                _target.headerfiles = table.unique(table.join(_target.headerfiles or {}, (target:headerfiles())))
+                _target.extrafiles = table.unique(table.join(_target.extrafiles or {}, (target:extrafiles())))
+
+                -- sort them to stabilize generation
+                table.sort(_target.sourcefiles)
+                table.sort(_target.headerfiles)
+                table.sort(_target.extrafiles)
+
+                -- save file groups
+                _target.filegroups = table.unique(table.join(_target.filegroups or {}, target:get("filegroups")))
+
+                -- save references to deps
+                for _, dep in ipairs(target:orderdeps()) do
+                    _target.deps = _target.deps or {}
+                    local dep_name = dep:name()
+                    _target.deps[dep_name] = path.relative(path.join(vsinfo.solution_dir, dep_name, dep_name .. ".vcxproj"), _target.project_dir)
+                end
+
+                for filegroup, groupconf in pairs(target:extraconf("filegroups")) do
+                    _target.filegroups_extraconf = _target.filegroups_extraconf or {}
+                    local mergedconf = _target.filegroups_extraconf[filegroup]
+                    if not mergedconf then
+                        mergedconf = {}
+                        _target.filegroups_extraconf[filegroup] = mergedconf
+                    end
+
+                    if groupconf.rootdir then
+                        mergedconf.rootdir = table.unique(table.join(mergedconf.rootdir or {}, table.wrap(groupconf.rootdir)))
+                    end
+                    if groupconf.files then
+                        mergedconf.files = table.unique(table.join(mergedconf.files or {}, table.wrap(groupconf.files)))
+                    end
+                    mergedconf.plain = groupconf.plain or mergedconf.plain
                 end
             end
         end
@@ -341,13 +512,13 @@ function make(outputdir, vsinfo)
     vs201x_solution.make(vsinfo)
 
     -- make .vcxproj
-    for _, target in pairs(targets) do
+    for _, target in table.orderpairs(targets) do
         vs201x_vcxproj.make(vsinfo, target)
         vs201x_vcxproj_filters.make(vsinfo, target)
     end
 
-    -- clear config and local cache
-    _clear_cacheconf()
+    -- clear local cache
+    _clear_cache()
 
     -- leave project directory
     os.cd(oldir)

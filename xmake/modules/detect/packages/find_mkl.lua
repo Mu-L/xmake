@@ -43,10 +43,9 @@ function main(opt)
         }
 
         -- find library
-        local result = {links = {}, linkdirs = {}, includedirs = {}}
+        local result = {links = {}, linkdirs = {}, includedirs = {}, threading = ""}
         local linkinfo = find_library("mkl_core", paths, {suffixes = path.join("lib", rdir)})
         if not linkinfo then
-            -- not found?
             return
         end
         table.insert(result.linkdirs, linkinfo.linkdir)
@@ -61,14 +60,14 @@ function main(opt)
         if tbb_res then
             table.join2(result.linkdirs, tbb_res.linkdirs)
             table.join2(result.links, {"mkl_tbb_thread", "mkl_core", "tbb"})
+            result.threading = "tbb"
         else
             table.join2(result.links, {"mkl_sequential", "mkl_core"})
+            result.threading = "seq"
         end
 
         -- find include
         table.insert(result.includedirs, find_path("mkl.h", paths, {suffixes = "include"}))
-
-        -- ok
         return result
     end
 end

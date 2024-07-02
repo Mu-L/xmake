@@ -33,7 +33,10 @@
 #   include <io.h>
 #   include "iscygpty.c"
 #else
+#    include <stdio.h>
 #    include <unistd.h>
+#    include <sys/types.h>
+#    include <sys/stat.h>
 #endif
 
 /* //////////////////////////////////////////////////////////////////////////////////////
@@ -53,7 +56,7 @@ static tb_size_t xm_io_stdfile_isatty(tb_size_t type)
     tb_bool_t answer = tb_false;
 #if defined(TB_CONFIG_OS_WINDOWS)
     DWORD  mode;
-    HANDLE console_handle;
+    HANDLE console_handle = tb_null;
     switch (type)
     {
     case XM_IO_FILE_TYPE_STDIN: console_handle = GetStdHandle(STD_INPUT_HANDLE); break;
@@ -61,7 +64,10 @@ static tb_size_t xm_io_stdfile_isatty(tb_size_t type)
     case XM_IO_FILE_TYPE_STDERR: console_handle = GetStdHandle(STD_ERROR_HANDLE); break;
     }
     answer = GetConsoleMode(console_handle, &mode);
-    if (!answer)
+    /* we cannot call is_cygpty for stdin, because it will cause io.readable is always true
+     * https://github.com/xmake-io/xmake/issues/2504#issuecomment-1170130756
+     */
+    if (!answer && type != XM_IO_FILE_TYPE_STDIN)
         answer = is_cygpty(console_handle);
 #else
     switch (type)
@@ -75,6 +81,19 @@ static tb_size_t xm_io_stdfile_isatty(tb_size_t type)
     if (answer) type |= XM_IO_FILE_FLAG_TTY;
     return type;
 }
+
+// @see https://github.com/xmake-io/xmake/issues/2580
+static tb_void_t xm_io_stdfile_init_buffer(tb_size_t type)
+{
+#if !defined(TB_CONFIG_OS_WINDOWS)
+    struct stat stats;
+    tb_int_t size = BUFSIZ;
+    if (fstat(fileno(stdout), &stats) != -1)
+        size = stats.st_blksize;
+    setvbuf(stdout, tb_null, _IOLBF, size);
+#endif
+}
+
 static xm_io_file_t* xm_io_stdfile_new(lua_State* lua, tb_size_t type)
 {
     // init stdfile
@@ -97,11 +116,14 @@ static xm_io_file_t* xm_io_stdfile_new(lua_State* lua, tb_size_t type)
     tb_assert_and_check_return_val(file, tb_null);
 
     // init file
-    file->std_ref    = fp;
+    file->u.std_ref  = fp;
     file->stream     = tb_null;
     file->fstream    = tb_null;
     file->type       = xm_io_stdfile_isatty(type);
     file->encoding   = TB_CHARSET_TYPE_UTF8;
+
+    // init stdio buffer
+    xm_io_stdfile_init_buffer(type);
 
     // init the read/write line cache buffer
     tb_buffer_init(&file->rcache);
@@ -120,7 +142,7 @@ tb_int_t xm_io_stdfile(lua_State* lua)
     tb_assert_and_check_return_val(lua, 0);
 
     // get std type
-    tb_long_t type = lua_tointeger(lua, 1);
+    tb_long_t type = (tb_long_t)lua_tointeger(lua, 1);
 
     /* push a new stdfile
      *
@@ -130,4 +152,5 @@ tb_int_t xm_io_stdfile(lua_State* lua)
     if (file) return 1;
     else xm_io_return_error(lua, "invalid stdfile type!");
 }
+
 

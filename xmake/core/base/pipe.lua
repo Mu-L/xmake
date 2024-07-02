@@ -67,21 +67,22 @@ function _instance:write(data, opt)
         return -1, errors
     end
 
-    -- data is bytes? unpack the raw address
-    local datasize = #data
-    if type(data) == "table" and data.caddr then
-        datasize = data:size()
-        data = {data = data:caddr(), size = data:size()}
+    -- get data address and size for bytes and string
+    if type(data) == "string" then
+        data = bytes(data)
     end
+    local datasize = data:size()
+    local dataaddr = data:caddr()
 
     -- init start and last
     opt = opt or {}
     local start = opt.start or 1
     local last = opt.last or datasize
-
-    -- check start and last
-    if start > last or start < 1 then
-        return -1, string.format("%s: invalid start(%d) and last(%d)!", self, start, last)
+    if start < 1 or start > datasize then
+        return -1, string.format("%s: invalid start(%d)!", self, start)
+    end
+    if last < start - 1 or last > datasize + start - 1 then
+        return -1, string.format("%s: invalid last(%d)!", self, last)
     end
 
     -- write it
@@ -91,7 +92,7 @@ function _instance:write(data, opt)
     if opt.block then
         local size = last + 1 - start
         while start <= last do
-            real, errors = io.pipe_write(self:cdata(), data, start, last)
+            real, errors = io.pipe_write(self:cdata(), dataaddr + start - 1, last + 1 - start)
             if real > 0 then
                 write = write + real
                 start = start + real
@@ -109,7 +110,7 @@ function _instance:write(data, opt)
             write = -1
         end
     else
-        write, errors = io.pipe_write(self:cdata(), data, start, last)
+        write, errors = io.pipe_write(self:cdata(), dataaddr + start - 1, last + 1 - start)
         if write < 0 and errors then
             errors = string.format("%s: %s", self, errors)
         end
@@ -118,12 +119,19 @@ function _instance:write(data, opt)
 end
 
 -- read data from pipe
-function _instance:read(size, opt)
+function _instance:read(buff, size, opt)
+    assert(buff)
 
     -- ensure opened
     local ok, errors = self:_ensure_opened()
     if not ok then
         return -1, errors
+    end
+
+    -- check buffer
+    size = size or buff:size()
+    if buff:size() < size then
+        return -1, string.format("%s: too small buffer!", self)
     end
 
     -- check size
@@ -133,20 +141,24 @@ function _instance:read(size, opt)
         return -1, string.format("%s: invalid size(%d)!", self, size)
     end
 
-    -- read it
+    -- init start in buffer
     opt = opt or {}
+    local start = opt.start or 1
+    local pos = start - 1
+    if start >= buff:size() or start < 1 then
+        return -1, string.format("%s: invalid start(%d)!", self, start)
+    end
+
+    -- read it
     local read = 0
     local real = 0
     local data_or_errors = nil
     if opt.block then
         local results = {}
         while read < size do
-            local buff = self:_readbuff()
-            real, data_or_errors = io.pipe_read(self:cdata(), buff:caddr(), math.min(buff:size(), size - read))
+            real, data_or_errors = io.pipe_read(self:cdata(), buff:caddr() + pos + read, math.min(buff:size() - pos - read, size - read))
             if real > 0 then
                 read = read + real
-                table.insert(results, bytes(buff, 1, real))
-                self:_readbuff_clear()
             elseif real == 0 then
                 local events, waiterrs = _instance.wait(self, pipe.EV_READ, opt.timeout or -1)
                 if events ~= pipe.EV_READ then
@@ -158,16 +170,14 @@ function _instance:read(size, opt)
             end
         end
         if read == size then
-            data_or_errors = bytes(results)
+            data_or_errors = buff:slice(start, read)
         else
             read = -1
         end
     else
-        local buff = self:_readbuff()
-        read, data_or_errors = io.pipe_read(self:cdata(), buff:caddr(), math.min(buff:size(), size))
+        read, data_or_errors = io.pipe_read(self:cdata(), buff:caddr() + pos, math.min(buff:size() - pos, size))
         if read > 0 then
-            data_or_errors = bytes(buff, 1, read)
-            self:_readbuff_clear()
+            data_or_errors = buff:slice(start, read)
         end
     end
     if read < 0 and data_or_errors then
@@ -255,21 +265,6 @@ function _instance:close()
     return ok
 end
 
--- get the read buffer
-function _instance:_readbuff()
-    local readbuff = self._READBUFF
-    if not readbuff then
-        readbuff = bytes(8192)
-        self._READBUFF = readbuff
-    end
-    return readbuff
-end
-
--- clear the read buffer
-function _instance:_readbuff_clear()
-    self._READBUFF = nil
-end
-
 -- ensure the pipe is opened
 function _instance:_ensure_opened()
     if not self:cdata() then
@@ -310,6 +305,8 @@ end
 --    pipe:close()
 -- end
 --
+-- mode: "r", "w", "rB" (block), "wB" (block), "rA" (non-block), "wA" (non-block)
+--
 function pipe.open(name, mode, buffsize)
 
     -- open named pipe
@@ -327,10 +324,17 @@ end
 -- rpipe:read(...)
 -- wpipe:write(...)
 --
-function pipe.openpair(buffsize)
+-- mode:
+--
+-- "BB": read block/write block
+-- "BA": read block/write non-block
+-- "AB": read non-block/write block
+-- "AA": read non-block/write non-block (default)
+--
+function pipe.openpair(mode, buffsize)
 
     -- open anonymous pipe pair
-    local rpipefile, wpipefile, errors = io.pipe_openpair(buffsize or 0)
+    local rpipefile, wpipefile, errors = io.pipe_openpair(mode, buffsize or 0)
     if rpipefile and wpipefile then
         return _instance.new(rpipefile), _instance.new(wpipefile)
     else

@@ -25,44 +25,38 @@ import("core.project.config")
 import("core.project.project")
 import("core.platform.platform")
 import("core.language.language")
-import("private.tools.ccache")
-import("private.utils.progress")
+import("core.project.policy")
+import("utils.progress")
 
 -- init it
 function init(self)
 
     -- init cuflags
-    if not is_plat("windows", "mingw") then
+    if not self:is_plat("windows", "mingw") then
         self:set("shared.cuflags", "-Xcompiler -fPIC")
         self:set("binary.cuflags", "-Xcompiler -fPIE")
     end
 
-    -- add -ccbin
-    local cu_ccbin = platform.tool("cu-ccbin")
-    if cu_ccbin then
-        self:add("cuflags", "-ccbin=" .. os.args(cu_ccbin))
-    end
-
     -- init flags map
-    self:set("mapflags",
-    {
+    self:set("mapflags", {
         -- warnings
-        ["-W4"]            = "-Wreorder"
-    ,   ["-Wextra"]        = "-Wreorder"
-    ,   ["-Weverything"]   = "-Wreorder"
+        ["-W4"]            = "-Wreorder --Wno-deprecated-gpu-targets --Wno-deprecated-declarations"
+    ,   ["-Wextra"]        = "-Wreorder --Wno-deprecated-gpu-targets --Wno-deprecated-declarations"
+    ,   ["-Weverything"]   = "-Wreorder --Wno-deprecated-gpu-targets --Wno-deprecated-declarations"
     })
 end
 
 -- make the symbol flag
-function nf_symbol(self, level, target)
+function nf_symbol(self, level, opt)
 
     -- debug? generate *.pdb file
     local flags = nil
     if level == "debug" then
-        flags = "-g -lineinfo"
-        if is_plat("windows") then
+        flags = {"-G", "-g", "-lineinfo"}
+        if self:is_plat("windows") then
             local host_flags = nil
             local symbolfile = nil
+            local target = opt.target
             if target and target.symbolfile then
                 symbolfile = target:symbolfile()
             end
@@ -82,11 +76,10 @@ function nf_symbol(self, level, target)
             else
                 host_flags = "-Zi"
             end
-            flags = flags .. ' -Xcompiler "' .. host_flags .. '"'
+            table.insert(flags, "-Xcompiler")
+            table.insert(flags, host_flags)
         end
     end
-
-    -- none
     return flags
 end
 
@@ -97,8 +90,8 @@ function nf_warning(self, level)
     local maps =
     {
         none       = "-w"
-    ,   everything = "-Wreorder"
-    ,   error      = "-Werror"
+    ,   everything = { "-Wreorder", "--Wno-deprecated-gpu-targets", "--Wno-deprecated-declarations" }
+    ,   error      = { "-Werror", "cross-execution-space-call,reorder,deprecated-declarations" }
     }
 
     -- for cl.exe on windows
@@ -138,13 +131,15 @@ function nf_warning(self, level)
     -- for gcc/clang, or any gnu compatible compiler on *nix
     --
     local host_warning = nil
-    if is_plat("windows") then
+    if self:is_plat("windows") then
         host_warning = cl_maps[level]
     else
         host_warning = gcc_clang_maps[level]
     end
     if host_warning then
-        warning = ((warning or "") .. ' -Xcompiler "' .. host_warning .. '"'):trim()
+        warning = table.wrap(warning)
+        table.insert(warning, '-Xcompiler')
+        table.insert(warning, host_warning)
     end
     return warning
 
@@ -152,20 +147,33 @@ end
 
 -- make the optimize flag
 function nf_optimize(self, level)
+    -- only for source kind
+    local kind = self:kind()
+    if language.sourcekinds()[kind] then
+        local maps =
+        {
+            none       = "-O0"
+        ,   fast       = "-O1"
+        ,   faster     = "-O2"
+        ,   fastest    = "-O3"
+        ,   smallest   = "-Os"
+        ,   aggressive = "-Ofast"
+        }
+        return maps[level]
+    end
+end
 
-    -- the maps
-    local maps =
-    {
-        none       = "-O0"
-    ,   fast       = "-O1"
-    ,   faster     = "-O2"
-    ,   fastest    = "-O3"
-    ,   smallest   = "-Os"
-    ,   aggressive = "-Ofast"
-    }
-
-    -- make it
-    return maps[level]
+-- make vs runtime flag
+function nf_runtime(self, runtime)
+    if self:is_plat("windows") and runtime then
+        local maps = {
+            MT = '-Xcompiler "-MT"',
+            MD = '-Xcompiler "-MD"',
+            MTd = '-Xcompiler "-MTd"',
+            MDd = '-Xcompiler "-MDd"'
+        }
+        return maps[runtime]
+    end
 end
 
 -- make the language flag
@@ -178,6 +186,9 @@ function nf_language(self, stdname)
             cxx03       = "--std c++03"
         ,   cxx11       = "--std c++11"
         ,   cxx14       = "--std c++14"
+        ,   cxx17       = "--std c++17"
+        ,   cxx20       = "--std c++20"
+        ,   cxxlatest   = {"--std c++20", "--std c++17", "--std c++14", "--std c++11", "--std c++03"}
         }
         local cxxmaps2 = {}
         for k, v in pairs(_g.cxxmaps) do
@@ -185,12 +196,23 @@ function nf_language(self, stdname)
         end
         table.join2(_g.cxxmaps, cxxmaps2)
     end
-    return _g.cxxmaps[stdname]
+    local maps = _g.cxxmaps
+    local result = maps[stdname]
+    if type(result) == "table" then
+        for _, v in ipairs(result) do
+            if self:has_flags(v, "cxflags") then
+                result = v
+                maps[stdname] = result
+                break
+            end
+        end
+    end
+    return result
 end
 
 -- make the define flag
 function nf_define(self, macro)
-    return "-D" .. macro
+    return {"-D" .. macro}
 end
 
 -- make the undefine flag
@@ -200,7 +222,7 @@ end
 
 -- make the includedir flag
 function nf_includedir(self, dir)
-    return {"-I", dir}
+    return {"-I" .. path.translate(dir)}
 end
 
 -- make the sysincludedir flag
@@ -210,7 +232,11 @@ end
 
 -- make the link flag
 function nf_link(self, lib)
-    return "-l" .. lib
+    if lib:endswith(".a") or lib:endswith(".so") or lib:endswith(".dylib") or lib:endswith(".lib") then
+        return lib
+    else
+        return "-l" .. lib
+    end
 end
 
 -- make the syslink flag
@@ -220,7 +246,7 @@ end
 
 -- make the linkdir flag
 function nf_linkdir(self, dir)
-    return {"-L", dir}
+    return {"-L" .. path.translate(dir)}
 end
 
 -- make the rpathdir flag
@@ -236,12 +262,12 @@ function nf_rpathdir(self, dir)
 end
 
 -- make the c precompiled header flag
-function nf_pcheader(self, pcheaderfile, target)
+function nf_pcheader(self, pcheaderfile)
     return {"-include", pcheaderfile}
 end
 
 -- make the c++ precompiled header flag
-function nf_pcxxheader(self, pcheaderfile, target)
+function nf_pcxxheader(self, pcheaderfile)
     return {"-include", pcheaderfile}
 end
 
@@ -258,9 +284,9 @@ function linkargv(self, objectfiles, targetkind, targetfile, flags)
     end
 
     -- add `-Wl,--out-implib,outputdir/libxxx.a` for xxx.dll on mingw/gcc
-    if targetkind == "shared" and config.plat() == "mingw" then
+    if targetkind == "shared" and self:is_plat("mingw") then
         table.insert(flags_extra, "-Xlinker")
-        table.insert(flags_extra, "-Wl,--out-implib," .. path.join(path.directory(targetfile), path.basename(targetfile) .. ".lib"))
+        table.insert(flags_extra, "-Wl,--out-implib," .. path.join(path.directory(targetfile), path.basename(targetfile) .. ".dll.a"))
     end
 
     -- make link args
@@ -270,23 +296,44 @@ end
 -- link the target file
 function link(self, objectfiles, targetkind, targetfile, flags)
     os.mkdir(path.directory(targetfile))
-    os.runv(linkargv(self, objectfiles, targetkind, targetfile, flags))
+    local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags)
+    os.runv(program, argv, {envs = self:runenvs()})
+end
+
+-- support `-MD -MF depfile.d`?
+function _has_flags_md_mf(self)
+    local has_md_mf = _g._HAS_MD_MF
+    if has_md_mf == nil then
+       has_md_mf = self:has_flags({"-MD", "-MF", os.nuldev()}, "cuflags", { flagskey = "-MD -MF" }) or false
+        _g._HAS_MD_MF = has_md_mf
+    end
+    return has_md_mf
 end
 
 -- support `-MMD -MF depfile.d`? some old gcc does not support it at same time
 function _has_flags_mmd_mf(self)
     local has_mmd_mf = _g._HAS_MMD_MF
-    if has_mmd_mf == nil then
+    if has_mmd_mf == nil and not is_host("windows") then
        has_mmd_mf = self:has_flags({"-MMD", "-MF", os.nuldev()}, "cuflags", { flagskey = "-MMD -MF" }) or false
         _g._HAS_MMD_MF = has_mmd_mf
     end
     return has_mmd_mf
 end
 
+-- support `-M -o depfile.d`?
+function _has_flags_m(self)
+    local has_m = _g._HAS_M
+    if not has_md_mf and has_m == nil then
+        has_m = self:has_flags("-M", "cuflags", { flagskey = "-M" }) or false
+        _g._HAS_M = has_m
+    end
+    return has_m
+end
+
 -- support `-MM -o depfile.d`?
 function _has_flags_mm(self)
     local has_mm = _g._HAS_MM
-    if not has_mmd_mf and has_mm == nil then
+    if not has_mmd_mf and has_mm == nil and not is_host("windows") then
         has_mm = self:has_flags("-MM", "cuflags", { flagskey = "-MM" }) or false
         _g._HAS_MM = has_mm
     end
@@ -295,11 +342,11 @@ end
 
 -- make the compile arguments list
 function compargv(self, sourcefile, objectfile, flags)
-    return ccache.cmdargv(self:program(), table.join("-c", flags, "-o", objectfile, sourcefile))
+    return self:program(), table.join("-c", flags, "-o", objectfile, sourcefile)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
     os.mkdir(path.directory(objectfile))
@@ -316,13 +363,22 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
                 if _has_flags_mmd_mf(self) then
                     compflags = table.join(compflags, "-MMD", "-MF", depfile)
                 elseif _has_flags_mm(self) then
+                    -- since -MMD is not supported, run nvcc twice
+                    local program, argv = compargv(self, sourcefile, depfile, table.join(flags, "-MM"))
+                    os.runv(program, argv, {envs = self:runenvs()})
+                elseif _has_flags_md_mf(self) then
+                    -- on windows only -MD and -M are supported
+                    compflags = table.join(compflags, "-MD", "-MF", depfile)
+                elseif _has_flags_m(self) then
                     -- since -MD is not supported, run nvcc twice
-                    os.runv(compargv(self, sourcefile, depfile, table.join(flags, "-MM")))
+                    local program, argv = compargv(self, sourcefile, depfile, table.join(flags, "-M"))
+                    os.runv(program, argv, {envs = self:runenvs()})
                 end
             end
 
             -- do compile
-            local outdata, errdata = os.iorunv(compargv(self, sourcefile, objectfile, compflags))
+            local program, argv = compargv(self, sourcefile, objectfile, compflags)
+            local outdata, errdata = os.iorunv(program, argv, {envs = self:runenvs()})
             return (outdata or "") .. (errdata or "")
         end,
         catch
@@ -332,12 +388,18 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
                 -- try removing the old object file for forcing to rebuild this source file
                 os.tryrm(objectfile)
 
+                -- use nvcc/stdout as errors first from os.iorunv()
+                if type(errors) == "table" then
+                    errors = (errors.stdout or "") .. (errors.stderr or "")
+                else
+                    errors = tostring(errors)
+                end
+
                 -- find the start line of error
-                errors = tostring(errors)
                 local lines = errors:split("\n", {plain = true})
                 local start = 0
                 for index, line in ipairs(lines) do
-                    if line:find("error:", 1, true) or line:find("错误：", 1, true) then
+                    if line:match("[eE]rror:", 1, true) or line:find("错误：", 1, true) or line:match("ptxas fatal%s*:") or line:match("error %a+[0-9]+%s*:") then
                         start = index
                         break
                     end
@@ -346,7 +408,10 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
                 -- get 16 lines of errors
                 if start > 0 or not option.get("verbose") then
                     if start == 0 then start = 1 end
-                    errors = table.concat(table.slice(lines, start, start + ifelse(#lines - start > 16, 16, #lines - start)), "\n")
+                    errors = table.concat(table.slice(lines, start, start + ((#lines - start > 16) and 16 or (#lines - start))), "\n")
+                end
+                if not option.get("verbose") then
+                    errors = errors .. "\n  ${yellow}> in ${bright}" .. sourcefile
                 end
 
                 -- raise compiling errors
@@ -358,7 +423,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             function (ok, warnings)
 
                 -- print some warnings
-                if warnings and #warnings > 0 and (option.get("verbose") or option.get("warning") or global.get("build_warning")) then
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
                     if progress.showing_without_scroll() then
                         print("")
                     end

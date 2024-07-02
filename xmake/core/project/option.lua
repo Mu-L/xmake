@@ -55,12 +55,20 @@ end
 function _instance:_save()
 
     -- clear scripts for caching to file
+    local check = self:get("check")
+    local check_after = self:get("check_after")
+    local check_before = self:get("check_before")
     self:set("check", nil)
     self:set("check_after", nil)
     self:set("check_before", nil)
 
     -- save option
     option._cache():set(self:name(), self:info())
+
+    -- restore scripts
+    self:set("check", check)
+    self:set("check_after", check_after)
+    self:set("check_before", check_before)
 end
 
 -- clear the option info for cache
@@ -68,22 +76,23 @@ function _instance:_clear()
     option._cache():set(self:name(), nil)
 end
 
--- check option conditions
-function _instance:_do_check()
+-- check snippets
+function _instance:_do_check_cxsnippets(snippets)
 
     -- import check_cxsnippets()
     self._check_cxsnippets = self._check_cxsnippets or sandbox_module.import("lib.detect.check_cxsnippets", {anonymous = true})
 
     -- check for c and c++
-    local passed = nil
+    local passed = 0
+    local result_output
     for _, kind in ipairs({"c", "cxx"}) do
 
         -- get conditions
-        local links    = self:get("links")
-        local snippets = self:get(kind .. "snippets")
-        local types    = self:get(kind .. "types")
-        local funcs    = self:get(kind .. "funcs")
-        local includes = self:get(kind .. "includes")
+        local links              = self:get("links")
+        local snippets           = self:get(kind .. "snippets")
+        local types              = self:get(kind .. "types")
+        local funcs              = self:get(kind .. "funcs")
+        local includes           = self:get(kind .. "includes")
 
         -- TODO it is deprecated
         local snippet  = self:get(kind .. "snippet")
@@ -100,23 +109,125 @@ function _instance:_do_check()
                 sourcekind = "cc"
             end
 
-            -- check it
-            local ok, results_or_errors = sandbox.load(self._check_cxsnippets, snippets, {target = self, sourcekind = sourcekind, types = types, funcs = funcs, includes = includes})
-            if not ok then
-                return false, results_or_errors
+            -- split snippets
+            local snippets_build = {}
+            local snippets_tryrun = {}
+            local snippets_output = {}
+            local snippets_binary_match = {}
+            local snippet_binary_match = nil
+            if snippets then
+                for name, snippet in pairs(snippets) do
+                    if self:extraconf(kind .. "snippets", name, "output") then
+                        snippets_output[name] = snippet
+                    elseif self:extraconf(kind .. "snippets", name, "tryrun") then
+                        snippets_tryrun[name] = snippet
+                    elseif self:extraconf(kind .. "snippets", name, "binary_match") then
+                        snippets_binary_match[name] = snippet
+                        snippet_binary_match = self:extraconf(kind .. "snippets", name, "binary_match")
+                    else
+                        snippets_build[name] = snippet
+                    end
+                end
+                if #table.keys(snippets_output) > 1 then
+                    return false, -1, string.format("option(%s): only support for only one snippet with output!", self:name())
+                end
             end
 
-            -- passed?
-            if results_or_errors then
-                passed = true
-            else
-                passed = false
-                break
+            -- check snippets (run with output)
+            if #table.keys(snippets_output) > 0 then
+                local ok, results_or_errors, output = sandbox.load(self._check_cxsnippets, snippets_output, {
+                                                            target = self,
+                                                            sourcekind = sourcekind,
+                                                            types = types,
+                                                            funcs = funcs,
+                                                            includes = includes,
+                                                            tryrun = true, output = true})
+                if not ok then
+                    return false, -1, results_or_errors
+                end
+
+                -- passed or no passed?
+                if results_or_errors then
+                    passed = 1
+                    result_output = output
+                else
+                    passed = -1
+                    break
+                end
+            end
+
+            -- check snippets (run only)
+            if passed == 0 and #table.keys(snippets_tryrun) > 0 then
+                local ok, results_or_errors = sandbox.load(self._check_cxsnippets, snippets_tryrun, {
+                                                            target = self,
+                                                            sourcekind = sourcekind,
+                                                            types = types,
+                                                            funcs = funcs,
+                                                            includes = includes,
+                                                            tryrun = true})
+                if not ok then
+                    return false, -1, results_or_errors
+                end
+
+                -- passed or no passed?
+                if results_or_errors then
+                    passed = 1
+                else
+                    passed = -1
+                    break
+                end
+            end
+
+            -- check snippets (run with binary_match)
+            if #table.keys(snippets_binary_match) > 0 then
+                local ok, results_or_errors, output = sandbox.load(self._check_cxsnippets, snippets_binary_match, {
+                                                            target = self,
+                                                            sourcekind = sourcekind,
+                                                            types = types,
+                                                            funcs = funcs,
+                                                            includes = includes,
+                                                            binary_match = snippet_binary_match})
+                if not ok then
+                    return false, -1, results_or_errors
+                end
+                -- passed or no passed?
+                if results_or_errors then
+                    passed = 1
+                    result_output = output
+                else
+                    passed = -1
+                    break
+                end
+            end
+
+            -- check snippets (build only)
+            if passed == 0 or #table.keys(snippets_build) > 0 then
+                local ok, results_or_errors = sandbox.load(self._check_cxsnippets, snippets_build, {
+                                                            target = self,
+                                                            sourcekind = sourcekind,
+                                                            types = types,
+                                                            funcs = funcs,
+                                                            includes = includes})
+                if not ok then
+                    return false, -1, results_or_errors
+                end
+
+                -- passed or no passed?
+                if results_or_errors then
+                    passed = 1
+                else
+                    passed = -1
+                    break
+                end
             end
         end
     end
+    return true, passed, result_output
+end
 
-    -- check features
+-- check features
+function _instance:_do_check_features()
+    local passed = 0
     local features = self:get("features")
     if features then
 
@@ -125,25 +236,50 @@ function _instance:_do_check()
 
         -- all features are supported?
         features = table.wrap(features)
-        local features_supported = self._core_tool_compiler.has_features(features, {target = self})
-        if features_supported and #features_supported == #features then
-            passed = true
+        if self._core_tool_compiler.has_features(features, {target = self}) then
+            passed = 1
         end
 
         -- trace
         if baseoption.get("verbose") or baseoption.get("diagnosis") then
             for _, feature in ipairs(features) do
-                utils.cprint("${dim}checking for feature(%s) ... %s", feature, passed and "${color.success}${text.success}" or "${color.nothing}${text.nothing}")
+                utils.cprint("${dim}checking for feature(%s) ... %s", feature, passed > 0 and "${color.success}${text.success}" or "${color.nothing}${text.nothing}")
             end
+        end
+    end
+    return true, passed
+end
+
+-- check option conditions
+function _instance:_do_check()
+
+    -- check snippets
+    local ok, passed, errors = self:_do_check_cxsnippets()
+    if not ok then
+        return false, errors
+    end
+
+    -- get snippet output
+    local output
+    if passed then
+        output = errors
+    end
+
+    -- check features
+    if passed == 0 then
+        ok, passed, errors = self:_do_check_features()
+        if not ok then
+            return false, errors
         end
     end
 
     -- enable this option if be passed
-    if passed then
+    if passed > 0 then
         self:enable(true)
+        if output then
+            self:set_value(output)
+        end
     end
-
-    -- ok
     return true
 end
 
@@ -175,7 +311,14 @@ function _instance:_check()
     end
 
     -- trace
-    utils.cprint("checking for %s ... %s", name, self:enabled() and "${color.success}${text.success}" or "${color.nothing}${text.nothing}")
+    local result
+    if self:enabled() then
+        local value = self:value()
+        result = "${color.success}" .. (type(value) == "boolean" and "${text.success}" or tostring(value))
+    else
+        result = "${color.nothing}${text.nothing}"
+    end
+    utils.cprint("checking for %s ... %s", name, result)
     if not ok then
         os.raise(errors)
     end
@@ -305,15 +448,26 @@ function _instance:add(name, ...)
     self:_invalidate()
 end
 
--- remove the value to the option info
+-- remove the value to the option info (deprecated)
 function _instance:del(name, ...)
     self._INFO:apival_del(name, ...)
+    self:_invalidate()
+end
+
+-- remove the value to the option info
+function _instance:remove(name, ...)
+    self._INFO:apival_remove(name, ...)
     self:_invalidate()
 end
 
 -- get the extra configuration
 function _instance:extraconf(name, item, key)
     return self._INFO:extraconf(name, item, key)
+end
+
+-- get configuration source information of the given api item
+function _instance:sourceinfo(name, item)
+    return self._INFO:sourceinfo(name, item)
 end
 
 -- get the given dependent option
@@ -339,6 +493,11 @@ function _instance:name()
     return self._NAME
 end
 
+-- get the option description
+function _instance:description()
+    return self:get("description") or ("The " .. self:name() .. " option")
+end
+
 -- get the cache key
 function _instance:cachekey()
     return string.format("%s_%d", tostring(self), self._CACHEID)
@@ -347,10 +506,8 @@ end
 -- get xxx_script
 function _instance:script(name)
 
-    -- get script
-    local script = self:get(name)
-
     -- imports some modules first
+    local script = self:get(name)
     if script then
         local scope = getfenv(script)
         if scope then
@@ -359,9 +516,24 @@ function _instance:script(name)
             end
         end
     end
-
-    -- ok
     return script
+end
+
+-- show menu?
+function _instance:showmenu()
+    local showmenu = self:get("showmenu")
+    if showmenu == nil then
+        -- auto check mode? we hidden menu by default
+        if self:get("ctypes") or self:get("cxxtypes") or
+            self:get("cfuncs") or self:get("cxxfuncs") or
+            self:get("cincludes") or self:get("cxxincludes") or
+            self:get("links") or self:get("syslinks") or
+            self:get("csnippets") or self:get("cxxsnippets") or
+            self:get("features") then
+            showmenu = false
+        end
+    end
+    return showmenu
 end
 
 -- get cache
@@ -424,6 +596,15 @@ function option.interpreter()
 
     -- define apis for language
     interp:api_define(language.apis())
+
+    -- we need to be able to precisely control the direction of deduplication of different types of values.
+    -- the default is to de-duplicate from left to right, but like links/syslinks need to be de-duplicated from right to left.
+    --
+    -- @see https://github.com/xmake-io/xmake/issues/1903
+    --
+    interp:deduplication_policy_set("links", "toleft")
+    interp:deduplication_policy_set("syslinks", "toleft")
+    interp:deduplication_policy_set("frameworks", "toleft")
 
     -- register filter handler
     interp:filter():register("option", function (variable)

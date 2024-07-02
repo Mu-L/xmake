@@ -21,8 +21,8 @@
 -- imports
 import("lib.detect.find_file")
 import("lib.detect.find_program")
-import("core.base.global")
 import("core.project.config")
+import("detect.sdks.find_vcpkgdir")
 
 -- find vcpkg
 --
@@ -46,28 +46,15 @@ function main(opt)
 
     -- init the search directories
     local paths = {}
-    local vcpkg = config.get("vcpkg") or global.get("vcpkg")
-    if vcpkg then
-        if os.isfile(vcpkg) then
-            vcpkg = path.directory(vcpkg)
-        end
-        table.insert(paths, vcpkg)
-    end
-    if is_host("windows") then
-        -- attempt to read path info after running `vcpkg integrate install`
-        local pathfile = "~/../Local/vcpkg/vcpkg.path.txt"
-        if os.isfile(pathfile) then
-            local dir = io.readfile(pathfile):trim()
-            if os.isdir(dir) then
-                table.insert(paths, dir)
-            end
-        end
+    local vcpkgdir = find_vcpkgdir()
+    if vcpkgdir then
+        table.insert(paths, vcpkgdir)
     end
 
     -- find program
     opt.paths = paths
     opt.envs  = {PATH = os.getenv("PATH")}
-    local program = find_program(opt.program or "vcpkg", opt)
+    local program = find_program(opt.program or (is_host("windows") and "vcpkg.exe" or "vcpkg"), opt)
 
     -- find program version
     local version = nil

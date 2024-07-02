@@ -46,7 +46,7 @@ static tb_void_t tb_os_args_append(tb_string_ref_t result, tb_char_t const* cstr
     {
         while ((ch = *p))
         {
-            if (ch == ' ' || ch == '(' || ch == ')') wrap_quote = tb_true;
+            if (ch == ' ') wrap_quote = tb_true;
             p++;
         }
     }
@@ -108,7 +108,7 @@ tb_int_t xm_os_args(lua_State* lua)
     if (lua_istable(lua, 1))
     {
         tb_size_t i = 0;
-        tb_size_t n = lua_objlen(lua, 1);
+        tb_size_t n = (tb_size_t)lua_objlen(lua, 1);
         for (i = 1; i <= n; i++)
         {
             // add space
@@ -117,10 +117,23 @@ tb_int_t xm_os_args(lua_State* lua)
             // add argument
             lua_pushnumber(lua, (tb_int_t)i);
             lua_rawget(lua, 1);
-            size_t size = 0;
-            tb_char_t const* cstr = luaL_checklstring(lua, -1, &size);
-            if (cstr && size)
-                tb_os_args_append(&result, cstr, size, escape, nowrap);
+            if (lua_istable(lua, -1)) // is path instance?
+            {
+                lua_pushstring(lua, "_STR");
+                lua_gettable(lua, -2);
+                size_t size = 0;
+                tb_char_t const* cstr = luaL_checklstring(lua, -1, &size);
+                if (cstr && size)
+                    tb_os_args_append(&result, cstr, size, escape, nowrap);
+                lua_pop(lua, 1);
+            }
+            else
+            {
+                size_t size = 0;
+                tb_char_t const* cstr = luaL_checklstring(lua, -1, &size);
+                if (cstr && size)
+                    tb_os_args_append(&result, cstr, size, escape, nowrap);
+            }
             lua_pop(lua, 1);
         }
     }

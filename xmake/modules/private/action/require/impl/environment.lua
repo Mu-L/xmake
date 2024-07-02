@@ -34,20 +34,22 @@ function enter()
 
     -- unzip or 7zip is necessary
     if not find_tool("unzip") and not find_tool("7z") then
-        raise("unzip or 7zip not found! we need install it first")
+        raise("failed to find unzip or 7zip! please install one of them first")
     end
 
     -- enter the environments of git
-    packagenv.enter("git")
+    _g._OLDENVS = packagenv.enter("git")
 
     -- git not found? install it first
     local packages = {}
-    if not find_tool("git") then
+    local git = find_tool("git")
+    if not git then
         table.join2(packages, install_packages("git"))
     end
 
     -- missing the necessary unarchivers for *.gz, *.7z? install them first, e.g. gzip, 7z, tar ..
-    if not ((find_tool("gzip") and find_tool("tar")) or find_tool("7z")) then
+    local zip = (find_tool("gzip") and find_tool("tar")) or find_tool("7z")
+    if not zip then
         table.join2(packages, install_packages("7z"))
     end
 
@@ -55,18 +57,20 @@ function enter()
     for _, instance in ipairs(packages) do
         instance:envs_enter()
     end
-    _g._PACKAGES = packages
+
+    -- we need to force to detect and flush detect cache after loading all environments
+    if not git then
+        find_tool("git", {force = true})
+    end
+    if not zip then
+        find_tool("7z", {force = true})
+    end
 end
 
 -- leave environment
 function leave()
-
-    -- leave the environments of installed packages
-    for _, instance in irpairs(_g._PACKAGES) do
-        instance:envs_leave()
+    local oldenvs = _g._OLDENVS
+    if oldenvs then
+        os.setenvs(oldenvs)
     end
-    _g._PACKAGES = nil
-
-    -- leave the environments of git
-    packagenv.leave("git")
 end

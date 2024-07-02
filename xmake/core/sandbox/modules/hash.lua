@@ -19,6 +19,7 @@
 --
 
 -- load modules
+local hash  = require("base/hash")
 local raise = require("sandbox/modules/raise")
 
 -- define module
@@ -38,13 +39,49 @@ function sandbox_hash.uuid4(name)
     return uuid
 end
 
--- make sha256 from the given file
-function sandbox_hash.sha256(file)
-    local sha256 = hash.sha256(file)
+-- make sha1 from the given file or data
+function sandbox_hash.sha1(file_or_data)
+    local sha1, errors = hash.sha1(file_or_data)
+    if not sha1 then
+        raise("cannot make sha1 for %s, %s", file_or_data, errors or "unknown errors")
+    end
+    return sha1
+end
+
+-- make sha256 from the given file or data
+function sandbox_hash.sha256(file_or_data)
+    local sha256, errors = hash.sha256(file_or_data)
     if not sha256 then
-        raise("cannot make sha256 for %s", file)
+        raise("cannot make sha256 for %s, %s", file_or_data, errors or "unknown errors")
     end
     return sha256
+end
+
+-- make md5 from the given file or data
+function sandbox_hash.md5(file_or_data)
+    local md5, errors = hash.md5(file_or_data)
+    if not md5 then
+        raise("cannot make md5 for %s, %s", file_or_data, errors or "unknown errors")
+    end
+    return md5
+end
+
+-- make xxhash64 from the given file or data
+function sandbox_hash.xxhash64(file_or_data)
+    local xxhash64, errors = hash.xxhash64(file_or_data)
+    if not xxhash64 then
+        raise("cannot make xxhash64 for %s, %s", file_or_data, errors or "unknown errors")
+    end
+    return xxhash64
+end
+
+-- make xxhash128 from the given file or data
+function sandbox_hash.xxhash128(file_or_data)
+    local xxhash128, errors = hash.xxhash128(file_or_data)
+    if not xxhash128 then
+        raise("cannot make xxhash128 for %s, %s", file_or_data, errors or "unknown errors")
+    end
+    return xxhash128
 end
 
 -- return module

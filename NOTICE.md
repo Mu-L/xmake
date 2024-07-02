@@ -21,14 +21,6 @@ which can be obtained at:
   * HOMEPAGE:
     * http://pdcurses.org/
 
-This product depends on 'lcurses/cui', Lua Console User Interface,
-which can be obtained at:
-
-  * LICENSE:
-    * core/src/lcurses/LICENSE (MIT License)
-  * HOMEPAGE:
-    * http://lua-cui.sourceforge.net/
-
 This product depends on 'libsv', Public domain semantic versioning in c,
 which can be obtained at:
 
@@ -44,6 +36,30 @@ which can be obtained at:
     * core/src/luajit/luajit/COPYRIGHT (MIT License)
   * HOMEPAGE:
     * http://luajit.org/
+
+This product depends on 'Lua', The Lua Programming Language,
+which can be obtained at:
+
+  * LICENSE:
+    * https://www.lua.org/license.html (MIT License)
+  * HOMEPAGE:
+    * http://lua.org/
+
+This product depends on 'lz4', Extremely Fast Compression algorithm,
+which can be obtained at:
+
+  * LICENSE:
+    * https://github.com/lz4/lz4/blob/dev/LICENSE
+  * HOMEPAGE:
+    * https://www.lz4.org/
+
+This product depends on 'xxHash', Extremely fast non-cryptographic hash algorithm,
+which can be obtained at:
+
+  * LICENSE:
+    * https://github.com/Cyan4973/xxHash/blob/dev/LICENSE
+  * HOMEPAGE:
+    * https://www.xxhash.com/
 
 This product depends on 'tbox', The Treasure Box Library,
 which can be obtained at:

@@ -47,22 +47,16 @@ function main (target)
 
     -- add frameworks
     if target:is_plat("macosx") then
-        target:add("frameworks", "AppKit")
+        local xcode = target:toolchain("xcode")
+        if xcode and xcode:config("appledev") == "catalyst" then
+            target:add("frameworks", "UIKit")
+        else
+            target:add("frameworks", "AppKit")
+        end
     else
         target:add("frameworks", "UIKit")
     end
 
     -- register clean files for `xmake clean`
     target:add("cleanfiles", bundledir)
-
-    -- depend xcode.framework? we need disable `build.across_targets_in_parallel` policy
-    local across_targets_in_parallel
-    for _, dep in ipairs(target:orderdeps()) do
-        if dep:rule("xcode.framework") then
-            across_targets_in_parallel = false
-        end
-    end
-    if across_targets_in_parallel ~= nil then
-        target:set("policy", "build.across_targets_in_parallel", across_targets_in_parallel)
-    end
 end

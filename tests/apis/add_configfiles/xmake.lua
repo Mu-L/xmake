@@ -8,6 +8,7 @@ if has_config("foo") then
     set_configvar("FOO_ENABLE", 1)
     set_configvar("FOO_ENABLE2", false)
     set_configvar("FOO_STRING", get_config("foo"))
+    set_configvar("FOO_DEFINE", get_config("foo"), {quote = false})
 end
 
 option("foo2")
@@ -25,7 +26,7 @@ target("test")
     set_configdir("$(buildir)/config")
     add_configfiles("test.c.in", {filename = "mytest.c"})
     add_configfiles("config.h.in", {variables = {hello = "xmake"}, prefixdir = "header"})
-    add_configfiles("*.man", {copyonly = true, prefixdir = "man"})
+    add_configfiles("*.man", {onlycopy = true, prefixdir = "man"})
     add_includedirs("$(buildir)/config/header")
 
 
@@ -36,7 +37,7 @@ target("test2")
     set_configvar("module", "test2")
     set_configdir("$(buildir)/config2")
     add_configfiles("test.c.in", {filename = "mytest.c"})
-    add_configfiles("config2.h.in", {variables = {hello = "xmake2"}, pattern = "@(.-)@", prefixdir = "header"})
+    add_configfiles("config2.h.in", {variables = {hello = "xmake2"}, pattern = "@([^\n]-)@", prefixdir = "header"})
     add_configfiles("*.man", {onlycopy = true, prefixdir = "man"})
     add_includedirs("$(buildir)/config2/header")
 

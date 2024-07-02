@@ -61,20 +61,17 @@ function _scan_packages(packages)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
 
     -- do configure first
     local config_argv = {"f", "-c"}
-    if option.get("verbose") then
-        table.insert(config_argv, "-v")
-    end
     if option.get("diagnosis") then
-        table.insert(config_argv, "-D")
+        table.insert(config_argv, "-vD")
     end
-    os.vrunv("xmake", config_argv)
+    os.vrunv(os.programfile(), config_argv)
 
     -- do scan
     local require_argv = {"require", "--scan"}
@@ -90,7 +87,7 @@ function _scan_packages(packages)
     if packages then
         table.join2(require_argv, packages)
     end
-    os.vexecv("xmake", require_argv)
+    os.vexecv(os.programfile(), require_argv)
 end
 
 -- main entry

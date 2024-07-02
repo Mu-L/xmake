@@ -34,7 +34,11 @@ function _find_mingwdir(sdkdir)
         if is_host("macosx", "linux") and os.isdir("/opt/llvm-mingw") then
             sdkdir = "/opt/llvm-mingw"
         elseif is_host("macosx") and os.isdir("/usr/local/opt/mingw-w64") then
+            -- for macOS Intel
             sdkdir = "/usr/local/opt/mingw-w64"
+        elseif is_host("macosx") and os.isdir("/opt/homebrew/opt/mingw-w64") then
+            -- for Apple Silicon
+            sdkdir = "/opt/homebrew/opt/mingw-w64"
         elseif is_host("linux") then
             sdkdir = "/usr"
         elseif is_subhost("msys") then
@@ -48,8 +52,11 @@ function _find_mingwdir(sdkdir)
         if not sdkdir then
             local pathenv = os.getenv("PATH")
             if pathenv then
+                local buildhash_pattern = string.rep('%x', 32)
+                local match_pattern = "[\\/]packages[\\/]%w[\\/].*mingw.*[\\/][^\\/]+[\\/]" .. buildhash_pattern .. "[\\/]bin"
                 for _, p in ipairs(path.splitenv(pathenv)) do
-                    if p:find(string.ipattern("mingw[%w%-%_%+]*[\\/]bin")) and path.filename(p) == "bin" and os.isdir(p) then
+                    if (p:find(match_pattern) or p:find(string.ipattern("mingw[%w%-%_%+]*[\\/]bin"))) and
+                        path.filename(p) == "bin" and os.isdir(p) then
                         sdkdir = path.directory(p)
                         break
                     end
@@ -94,6 +101,9 @@ function _find_mingw(sdkdir, bindir, cross)
 
     -- find cross toolchain
     local toolchain = find_cross_toolchain(sdkdir or bindir, {bindir = bindir, cross = cross})
+    if not toolchain then -- fallback, e.g. gcc.exe without cross
+        toolchain = find_cross_toolchain(sdkdir or bindir, {bindir = bindir})
+    end
     if toolchain then
         return {sdkdir = toolchain.sdkdir, bindir = toolchain.bindir, cross = toolchain.cross}
     end
