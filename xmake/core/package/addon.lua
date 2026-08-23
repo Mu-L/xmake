@@ -168,12 +168,19 @@ function addon._check_conflicts(dirname, addoninfo)
     end
 
     -- the global modules can also conflict with the builtin and the user modules
+    --
+    -- @note the `core.*` modules are in the core directory of the sandbox,
+    -- they are not in `<programdir>/modules`,
+    -- @see core/sandbox/modules/import/core/sandbox/module.lua
+    local moduledirs = {path.join(os.programdir(), "modules"),
+                        path.join(os.programdir(), "core", "sandbox", "modules", "import"),
+                        path.join(global.directory(), "modules")}
     for _, name in ipairs(addoninfo.globalmodules or {}) do
         local modulepath = (name:gsub("%.", "/")) .. ".lua"
-        for _, moduledir in ipairs({os.programdir(), global.directory()}) do
-            if os.isfile(path.join(moduledir, "modules", modulepath)) then
+        for _, moduledir in ipairs(moduledirs) do
+            if os.isfile(path.join(moduledir, modulepath)) then
                 return string.format("global module(%s) conflicts, it has been provided by %s!\nplease rename it in the addon manifest.",
-                    name, moduledir == os.programdir() and "xmake" or path.join(moduledir, "modules"))
+                    name, moduledir:startswith(os.programdir()) and "xmake" or moduledir)
             end
         end
     end
