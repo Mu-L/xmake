@@ -2,6 +2,34 @@
 
 ## master (unreleased)
 
+### New features
+
+* [#7696](https://github.com/xmake-io/xmake/pull/7696): Add addons support, to extend xmake with plugins, rules, toolchains, templates, modules and includes files
+* [#7702](https://github.com/xmake-io/xmake/pull/7702): Auto-install the addons declared by a project and lock them in `xmake-addons.lock`
+* [#7714](https://github.com/xmake-io/xmake/pull/7714): Support `add_addons(...)` in `xmake.lua`
+* [#7706](https://github.com/xmake-io/xmake/pull/7706): Add tests for addons
+* [#7707](https://github.com/xmake-io/xmake/pull/7707): Add tests for the package definitions shipped by addons
+* [#7717](https://github.com/xmake-io/xmake/pull/7717): Move the `format` / `doxygen` / `macro` plugins to addons
+* [#7723](https://github.com/xmake-io/xmake/pull/7723): Add new cross-compilation architectures, e.g. SPARC64
+* [#7721](https://github.com/xmake-io/xmake/pull/7721): Add the `package.host.install_locally` policy
+* [#7699](https://github.com/xmake-io/xmake/pull/7699): Rework the templates directory and template distribution
+* Add the `pkg` package manager for BSD
+
+### Changes
+
+* [#7719](https://github.com/xmake-io/xmake/pull/7719): Propagate the vector extensions of a package to its consumers
+* [#7713](https://github.com/xmake-io/xmake/pull/7713): Run `hlsl2spv` / `glsl2spv` before the C++ module scan
+* [#7722](https://github.com/xmake-io/xmake/pull/7722): Improve the interpreter, project loading, search cache and semver
+* [#7733](https://github.com/xmake-io/xmake/pull/7733): Check the name conflicts of the global modules of addons
+
+### Bugs fixed
+
+* [#7710](https://github.com/xmake-io/xmake/pull/7710): Fix the link name of libraries ending with `.lib`
+* [#7709](https://github.com/xmake-io/xmake/pull/7709): Fix the runtime flags of clang
+* [#7703](https://github.com/xmake-io/xmake/pull/7703): Fix wix to recognize `x86_64` when passing `-arch`
+* [#7701](https://github.com/xmake-io/xmake/pull/7701): Fix the dependency check to detect appended nested values
+* [#7698](https://github.com/xmake-io/xmake/pull/7698): Fix the semver version selection and build metadata sorting
+
 ## v3.1.0
 
 ### New features
@@ -2489,6 +2517,34 @@
 # 更新日志
 
 ## master (开发中)
+
+### 新特性
+
+* [#7696](https://github.com/xmake-io/xmake/pull/7696): 添加 addons 支持，可以用插件、规则、工具链、模板、模块和 includes 文件扩展 xmake
+* [#7702](https://github.com/xmake-io/xmake/pull/7702): 自动安装工程声明的 addon，并用 `xmake-addons.lock` 锁定版本
+* [#7714](https://github.com/xmake-io/xmake/pull/7714): 支持在 `xmake.lua` 中使用 `add_addons(...)`
+* [#7706](https://github.com/xmake-io/xmake/pull/7706): 添加 addon 测试
+* [#7707](https://github.com/xmake-io/xmake/pull/7707): 添加 addon 分发 package 定义的测试
+* [#7717](https://github.com/xmake-io/xmake/pull/7717): 将 `format` / `doxygen` / `macro` 插件迁移为 addon
+* [#7723](https://github.com/xmake-io/xmake/pull/7723): 添加新的交叉编译架构，例如 SPARC64
+* [#7721](https://github.com/xmake-io/xmake/pull/7721): 添加 `package.host.install_locally` 策略
+* [#7699](https://github.com/xmake-io/xmake/pull/7699): 重构模板目录和模板分发
+* 添加 BSD 的 `pkg` 包管理器支持
+
+### 改进
+
+* [#7719](https://github.com/xmake-io/xmake/pull/7719): 将包的向量扩展配置传递给使用它的目标
+* [#7713](https://github.com/xmake-io/xmake/pull/7713): 让 `hlsl2spv` / `glsl2spv` 在 C++ 模块扫描之前执行
+* [#7722](https://github.com/xmake-io/xmake/pull/7722): 改进 interpreter、工程加载、搜索缓存和 semver
+* [#7733](https://github.com/xmake-io/xmake/pull/7733): 检查 addon 全局模块的命名冲突
+
+### Bug 修复
+
+* [#7710](https://github.com/xmake-io/xmake/pull/7710): 修复 `.lib` 结尾的库名被错误裁剪的问题
+* [#7709](https://github.com/xmake-io/xmake/pull/7709): 修复 clang 的 runtime flags 检测
+* [#7703](https://github.com/xmake-io/xmake/pull/7703): 修复 wix 传递 `-arch` 时无法识别 `x86_64` 的问题
+* [#7701](https://github.com/xmake-io/xmake/pull/7701): 修复依赖检测无法发现嵌套值追加的问题
+* [#7698](https://github.com/xmake-io/xmake/pull/7698): 修复 semver 的版本选择和 build metadata 排序
 
 ## v3.1.0
 
