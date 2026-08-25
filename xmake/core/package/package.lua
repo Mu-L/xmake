@@ -3116,12 +3116,20 @@ end
 --
 -- @param opt   the options, e.g. {localdir = true}
 --              - localdir: return the local project packages directory (build/.packages)
---                          instead of the global directory (~/.xmake/packages)
+--                          instead of the global directory (~/.xmake/packages),
+--                          it can be overridden with `XMAKE_PKG_LOCALDIR`
 --
 -- @return      the install directory path
 --
 function package.installdir(opt)
     if opt and opt.localdir then
+        -- the parent process passes its local directory to the sub-process which builds
+        -- a package, so the packages it installs locally land in the same place and are
+        -- not installed twice, @see https://github.com/xmake-io/xmake/issues/7716
+        local localdir = os.getenv("XMAKE_PKG_LOCALDIR")
+        if localdir then
+            return path.normalize(path.absolute(localdir))
+        end
         return path.join(config.builddir({absolute = true}), ".packages")
     end
     local installdir = package._INSTALLDIR
