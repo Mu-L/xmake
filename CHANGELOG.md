@@ -2,6 +2,8 @@
 
 ## master (unreleased)
 
+## v3.1.1
+
 ### New features
 
 * [#7696](https://github.com/xmake-io/xmake/pull/7696): Add addons support, to extend xmake with plugins, rules, toolchains, templates, modules and includes files
@@ -21,14 +23,18 @@
 * [#7713](https://github.com/xmake-io/xmake/pull/7713): Run `hlsl2spv` / `glsl2spv` before the C++ module scan
 * [#7722](https://github.com/xmake-io/xmake/pull/7722): Improve the interpreter, project loading, search cache and semver
 * [#7733](https://github.com/xmake-io/xmake/pull/7733): Check the name conflicts of the global modules of addons
+* [#7726](https://github.com/xmake-io/xmake/pull/7726): Improve the mingw toolchain for clang and libc++
 
 ### Bugs fixed
 
+* [#7737](https://github.com/xmake-io/xmake/pull/7737): Fix the duplicated packages of the nested builds when installing them locally
+* [#7738](https://github.com/xmake-io/xmake/issues/7738): Fix the platform menu of the remote build, e.g. `xmake f -p windows --wdk=xxx`
 * [#7710](https://github.com/xmake-io/xmake/pull/7710): Fix the link name of libraries ending with `.lib`
 * [#7709](https://github.com/xmake-io/xmake/pull/7709): Fix the runtime flags of clang
 * [#7703](https://github.com/xmake-io/xmake/pull/7703): Fix wix to recognize `x86_64` when passing `-arch`
 * [#7701](https://github.com/xmake-io/xmake/pull/7701): Fix the dependency check to detect appended nested values
 * [#7698](https://github.com/xmake-io/xmake/pull/7698): Fix the semver version selection and build metadata sorting
+* Fix `scheduler.co_resume` to raise the errors of the resumed coroutine
 
 ## v3.1.0
 
@@ -2518,6 +2524,8 @@
 
 ## master (开发中)
 
+## v3.1.1
+
 ### 新特性
 
 * [#7696](https://github.com/xmake-io/xmake/pull/7696): 添加 addons 支持，可以用插件、规则、工具链、模板、模块和 includes 文件扩展 xmake
@@ -2537,14 +2545,18 @@
 * [#7713](https://github.com/xmake-io/xmake/pull/7713): 让 `hlsl2spv` / `glsl2spv` 在 C++ 模块扫描之前执行
 * [#7722](https://github.com/xmake-io/xmake/pull/7722): 改进 interpreter、工程加载、搜索缓存和 semver
 * [#7733](https://github.com/xmake-io/xmake/pull/7733): 检查 addon 全局模块的命名冲突
+* [#7726](https://github.com/xmake-io/xmake/pull/7726): 改进 mingw 工具链对 clang 和 libc++ 的支持
 
 ### Bug 修复
 
+* [#7737](https://github.com/xmake-io/xmake/pull/7737): 修复本地安装包时，嵌套构建重复安装包的问题
+* [#7738](https://github.com/xmake-io/xmake/issues/7738): 修复远程编译下的平台菜单，例如 `xmake f -p windows --wdk=xxx`
 * [#7710](https://github.com/xmake-io/xmake/pull/7710): 修复 `.lib` 结尾的库名被错误裁剪的问题
 * [#7709](https://github.com/xmake-io/xmake/pull/7709): 修复 clang 的 runtime flags 检测
 * [#7703](https://github.com/xmake-io/xmake/pull/7703): 修复 wix 传递 `-arch` 时无法识别 `x86_64` 的问题
 * [#7701](https://github.com/xmake-io/xmake/pull/7701): 修复依赖检测无法发现嵌套值追加的问题
 * [#7698](https://github.com/xmake-io/xmake/pull/7698): 修复 semver 的版本选择和 build metadata 排序
+* 修复 `scheduler.co_resume`，让被恢复协程的错误能够正常抛出
 
 ## v3.1.0
 
