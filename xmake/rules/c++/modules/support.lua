@@ -111,6 +111,10 @@ function has_two_phase_compilation_support(target)
     return _support(target).has_two_phase_compilation_support(target)
 end
 
+function has_precompile_reduced_bmi_support(target)
+    return _support(target).has_precompile_reduced_bmi_support(target)
+end
+
 -- strip flags not relevent for module reuse
 function strip_flags(target, flags, opt)
 
@@ -437,4 +441,3 @@ function add_installfiles_for_modules(target, modules)
         end
     end
 end
-

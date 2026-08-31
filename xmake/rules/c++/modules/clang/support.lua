@@ -119,6 +119,14 @@ function has_two_phase_compilation_support(target)
     return target:policy("build.c++.modules.two_phases")
 end
 
+function has_precompile_reduced_bmi_support(target)
+    if not target:policy("build.c++.modules.clang.precompile_reduced_bmi") or not has_two_phase_compilation_support(target) then
+        return false
+    end
+    local clang_version = get_clang_version(target)
+    return clang_version and semver.compare(clang_version, "23.0") >= 0 or false
+end
+
 -- flags that doesn't affect bmi generation
 function strippeable_flags()
     -- speculative list as there is no resource that list flags that prevent reusability, this list will likely be improve over time
