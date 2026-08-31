@@ -7,6 +7,10 @@ function clang_min_ver()
     return _CLANG_MIN_VER
 end
 
+function clang_cl_min_ver()
+    return _CLANG_MIN_VER
+end
+
 function _check_commands(config, outdata)
     local has_precompile_reduced_bmi = outdata:find("--precompile-reduced-bmi", 1, true) ~= nil
     local expect_precompile_reduced_bmi = config.precompile_reduced_bmi and config.two_phases
