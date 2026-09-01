@@ -123,8 +123,7 @@ function has_precompile_reduced_bmi_support(target)
     if not target:policy("build.c++.modules.clang.precompile_reduced_bmi") or not has_two_phase_compilation_support(target) then
         return false
     end
-    local clang_version = get_clang_version(target)
-    return clang_version and semver.compare(clang_version, "23.0") >= 0 or false
+    return get_modulesprecompilereducedbmiflag(target) ~= nil
 end
 
 -- flags that doesn't affect bmi generation
@@ -388,6 +387,25 @@ function get_modulesreducedbmiflag(target)
         _g.modulesreducedbmiflag = modulesreducedbmiflag or false
     end
     return modulesreducedbmiflag or nil
+end
+
+function get_modulesprecompilereducedbmiflag(target)
+    local modulesprecompilereducedbmiflag = _g.modulesprecompilereducedbmiflag
+    if modulesprecompilereducedbmiflag == nil then
+        local compinst = target:compiler("cxx")
+        local checkflags = "--precompile-reduced-bmi"
+        if target:has_tool("cxx", "clang_cl") then
+            -- clang_cl.has_flags() appends -c and treats unused-argument warnings as errors,
+            -- but --precompile-reduced-bmi does not use -c. Ignore that specific warning and
+            -- treat unknown-argument warnings as errors to reject unsupported flags.
+            checkflags = {checkflags, "-Wno-unused-command-line-argument", "-Werror=unknown-argument"}
+        end
+        if compinst:has_flags(checkflags, "cxxflags", {flagskey = "clang_modules_precompile_reduced_bmi", tryrun = true}) then
+            modulesprecompilereducedbmiflag = "--precompile-reduced-bmi"
+        end
+        _g.modulesprecompilereducedbmiflag = modulesprecompilereducedbmiflag or false
+    end
+    return modulesprecompilereducedbmiflag or nil
 end
 
 function has_clangscandepssupport(target)
