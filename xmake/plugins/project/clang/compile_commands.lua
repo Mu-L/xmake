@@ -69,10 +69,13 @@ end
 -- specify windows sdk verison
 function _get_windows_sdk_arguments(target)
     local args = {}
-    local msvc = target:toolchain("msvc")
-    if msvc then
-        local envs = msvc:runenvs()
-        if envs then
+    if target and target:is_plat("windows") then
+        local toolchain = target:toolchain("msvc") or
+            target:toolchain("clang-cl") or
+            target:toolchain("clang") or
+            target:toolchain("llvm")
+        local envs = toolchain and toolchain:runenvs()
+        if envs and envs.INCLUDE then
             for _, dir in ipairs(path.splitenv(envs.INCLUDE)) do
                 table.insert(args, "-imsvc")
                 table.insert(args, dir)
