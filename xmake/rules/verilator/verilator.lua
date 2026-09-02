@@ -369,6 +369,8 @@ function buildcmd_vfiles(target, batchcmds, sourcebatch, opt)
 
     -- generate c++ sourcefiles
     batchcmds:vrunv(verilator, argv, { envs = toolchain:runenvs() })
+    local depvalues = {verilator, argv, toolchain:runenvs()}
+    batchcmds:add_depvalues(depvalues)
     batchcmds:add_depfiles(sourcefiles)
     batchcmds:set_depmtime(os.mtime(makefile))
     batchcmds:set_depcache(dependfile)
