@@ -195,7 +195,7 @@ function should_build(target, module)
         dependinfo.files = {module.sourcefile}
         dependinfo.values = {compinst:program(), compflags}
         if module.bmifile and not module.headerunit and support.has_two_phase_compilation_support(target) then
-            local bmi_mode = support.has_precompile_reduced_bmi_support(target) and "--precompile-reduced-bmi" or "--precompile"
+            local bmi_mode = support.has_precompile_reduced_bmi_support(target) and support.get_modulesprecompilereducedbmiflag(target) or "--precompile"
             table.insert(dependinfo.values, bmi_mode)
         end
         local objectfile_exists = (module.headerunit or support.is_bmionly(target, module.sourcefile)) and true or os.isfile(module.objectfile)

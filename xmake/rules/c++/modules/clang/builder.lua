@@ -66,6 +66,7 @@ function _make_modulebuildflags(target, module, opt)
     local modules_reduced_bmi_flag = support.get_modulesreducedbmiflag(target)
     local has_two_phases = target:policy("build.c++.modules.two_phases")
     local has_precompile_reduced_bmi = support.has_precompile_reduced_bmi_support(target)
+    local modules_precompile_reduced_bmi_flag = has_precompile_reduced_bmi and support.get_modulesprecompilereducedbmiflag(target)
     local flags
     if opt.bmi then
         local module_outputflag = support.get_moduleoutputflag(target)
@@ -73,7 +74,7 @@ function _make_modulebuildflags(target, module, opt)
         flags = {"-x", "c++-module"}
 
         if not opt.objectfile then
-            table.insert(flags, has_precompile_reduced_bmi and "--precompile-reduced-bmi" or "--precompile")
+            table.insert(flags, modules_precompile_reduced_bmi_flag or "--precompile")
             if target:has_tool("cxx", "clang_cl") then
                 table.join2(flags, "/clang:-o", "/clang:" .. module.bmifile)
             end

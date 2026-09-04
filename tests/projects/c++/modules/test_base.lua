@@ -153,9 +153,12 @@ function run_tests(clang_options, gcc_options, msvc_options)
             if not clang_options.disable_clang_cl then
                 local clang_cl_options = table.clone(clang_options)
                 clang_cl_options.compiler = "clang-cl"
-                clang_cl_options.version = clang_cl_min_ver()
+                local clang_cl_minver = clang_cl_min_ver()
+                if semver.compare(clang_cl_options.version, clang_cl_minver) < 0 then
+                    clang_cl_options.version = clang_cl_minver
+                end
                 build_tests("clang-cl", clang_cl_options)
-                build_tests("clang-cl", table.join(clang_options, {two_phases = false}))
+                build_tests("clang-cl", table.join(clang_cl_options, {two_phases = false}))
             end
             if clang_options.stdmodule then
                 wprint("std modules tests skipped for Windows clang libc++ as it's not currently supported officially")
