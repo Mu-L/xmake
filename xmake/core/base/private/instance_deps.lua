@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        instance_deps.lua
@@ -46,26 +46,32 @@ function instance_deps.load_deps(instance, instances, deps, orderdeps, depspath,
         -- @see https://github.com/xmake-io/xmake/issues/3144
         local depname = plaindeps[total + 1 - idx]
         local depinst = instances[depname]
+        if depinst == nil and instance.namespace then
+            local namespace = instance:namespace()
+            if namespace then
+                depinst = instances[namespace .. "::" .. depname]
+            end
+        end
         if depinst then
             local continue_walk = true
             if walkdep then
                 continue_walk = walkdep(instance, depinst)
             end
             if continue_walk then
-                local depspath_sub
-                if depspath then
-                    for idx, name in ipairs(depspath) do
-                        if name == depname then
-                            local circular_deps = table.slice(depspath, idx)
-                            table.insert(circular_deps, depname)
-                            os.raise("circular dependency(%s) detected!", table.concat(circular_deps, ", "))
-                        end
-                    end
-                    depspath_sub = table.join(depspath, depname)
-                end
-                instance_deps.load_deps(depinst, instances, deps, orderdeps, depspath_sub, walkdep)
                 if not deps[depname] then
                     deps[depname] = depinst
+                    local depspath_sub
+                    if depspath then
+                        for idx, name in ipairs(depspath) do
+                            if name == depname then
+                                local circular_deps = table.slice(depspath, idx)
+                                table.insert(circular_deps, depname)
+                                os.raise("circular dependency(%s) detected!", table.concat(circular_deps, ", "))
+                            end
+                        end
+                        depspath_sub = table.join(depspath, depname)
+                    end
+                    instance_deps.load_deps(depinst, instances, deps, orderdeps, depspath_sub, walkdep)
                     table.insert(orderdeps, depinst)
                 end
             end
@@ -75,25 +81,31 @@ end
 
 -- sort the given instance with deps
 function instance_deps._sort_instance(instance, instances, orderinstances, instancerefs, depspath)
-    for _, depname in ipairs(table.wrap(instance:get("deps"))) do
-        local depinst = instances[depname]
-        if depinst then
-            local depspath_sub
-            if depspath then
-                for idx, name in ipairs(depspath) do
-                    if name == depname then
-                        local circular_deps = table.slice(depspath, idx)
-                        table.insert(circular_deps, depname)
-                        os.raise("circular dependency(%s) detected!", table.concat(circular_deps, ", "))
-                    end
+    if not instancerefs[instance:fullname()] then
+        instancerefs[instance:fullname()] = true
+        for _, depname in ipairs(table.wrap(instance:get("deps"))) do
+            local depinst = instances[depname]
+            if depinst == nil and instance.namespace then
+                local namespace = instance:namespace()
+                if namespace then
+                    depinst = instances[namespace .. "::" .. depname]
                 end
-                depspath_sub = table.join(depspath, depname)
             end
-            instance_deps._sort_instance(depinst, instances, orderinstances, instancerefs, depspath_sub)
+            if depinst then
+                local depspath_sub
+                if depspath then
+                    for idx, name in ipairs(depspath) do
+                        if name == depname then
+                            local circular_deps = table.slice(depspath, idx)
+                            table.insert(circular_deps, depname)
+                            os.raise("circular dependency(%s) detected!", table.concat(circular_deps, ", "))
+                        end
+                    end
+                    depspath_sub = table.join(depspath, depinst:fullname())
+                end
+                instance_deps._sort_instance(depinst, instances, orderinstances, instancerefs, depspath_sub)
+            end
         end
-    end
-    if not instancerefs[instance:name()] then
-        instancerefs[instance:name()] = true
         table.insert(orderinstances, instance)
     end
 end
@@ -111,7 +123,7 @@ function instance_deps.sort(instances)
     local refs = {}
     local orderinstances = {}
     for _, instance in table.orderpairs(instances) do
-        instance_deps._sort_instance(instance, instances, orderinstances, refs, {instance:name()})
+        instance_deps._sort_instance(instance, instances, orderinstances, refs, {instance:fullname()})
     end
     return orderinstances
 end

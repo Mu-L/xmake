@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        socket.lua
@@ -131,7 +131,12 @@ function _instance:ctrl(code, value)
     return ok, errors
 end
 
--- bind socket
+-- bind socket to address and port
+--
+-- @param addr  the bind address
+-- @param port  the bind port
+-- @return      true on success, or false and error info
+--
 function _instance:bind(addr, port)
 
     -- ensure opened
@@ -171,7 +176,11 @@ function _instance:bind_unix(addr, opt)
     return ok, errors
 end
 
--- listen socket
+-- listen for incoming connections
+--
+-- @param backlog the maximum pending connections
+-- @return      true on success, or false and error info
+--
 function _instance:listen(backlog)
 
     -- ensure opened
@@ -188,7 +197,11 @@ function _instance:listen(backlog)
     return ok, errors
 end
 
--- accept socket
+-- accept an incoming connection
+--
+-- @param opt   the options (optional)
+-- @return      the client socket, or nil on timeout
+--
 function _instance:accept(opt)
 
     -- ensure opened
@@ -217,7 +230,13 @@ function _instance:accept(opt)
     return sock, errors
 end
 
--- connect socket
+-- connect to remote address and port
+--
+-- @param addr  the remote address
+-- @param port  the remote port
+-- @param opt   the options (optional)
+-- @return      1 on success, 0 on timeout, -1 on error
+--
 function _instance:connect(addr, port, opt)
 
     -- ensure opened
@@ -281,6 +300,11 @@ function _instance:connect_unix(addr, opt)
 end
 
 -- send data to socket
+--
+-- @param data  the data to send (string or bytes)
+-- @param opt   the options, e.g. {block = true}
+-- @return      the real sent size, or -1 on error
+--
 function _instance:send(data, opt)
 
     -- ensure opened
@@ -346,7 +370,12 @@ function _instance:send(data, opt)
     return send, errors
 end
 
--- send file to socket
+-- send file data to socket (zero-copy)
+--
+-- @param file  the file object
+-- @param opt   the options (optional)
+-- @return      the real sent size, or -1 on error
+--
 function _instance:sendfile(file, opt)
 
     -- ensure the socket opened
@@ -415,7 +444,13 @@ function _instance:sendfile(file, opt)
     return send, errors
 end
 
--- recv data from socket
+-- receive data from socket
+--
+-- @param buff  the buffer to receive data
+-- @param size  the max receive size
+-- @param opt   the options, e.g. {block = true}
+-- @return      the real received size, or -1 on error
+--
 function _instance:recv(buff, size, opt)
     assert(buff)
 
@@ -488,7 +523,14 @@ function _instance:recv(buff, size, opt)
     return recv, data_or_errors
 end
 
--- send udp data to peer
+-- send UDP data to peer
+--
+-- @param data  the data to send
+-- @param addr  the peer address
+-- @param port  the peer port
+-- @param opt   the options (optional)
+-- @return      the real sent size, or -1 on error
+--
 function _instance:sendto(data, addr, port, opt)
 
     -- ensure opened
@@ -553,7 +595,13 @@ function _instance:sendto(data, addr, port, opt)
     return send, errors
 end
 
--- recv udp data from peer
+-- receive UDP data from peer
+--
+-- @param buff  the buffer to receive data
+-- @param size  the max receive size
+-- @param opt   the options (optional)
+-- @return      the real received size, the peer address, the peer port
+--
 function _instance:recvfrom(buff, size, opt)
     assert(buff)
 
@@ -624,7 +672,12 @@ function _instance:recvfrom(buff, size, opt)
     return recv, data_or_errors, addr, port
 end
 
--- wait socket events
+-- wait for socket events
+--
+-- @param events    the events to wait, e.g. socket.EV_RECV, socket.EV_SEND
+-- @param timeout   the timeout in milliseconds, -1 for infinite
+-- @return          the received events, or 0 on timeout
+--
 function _instance:wait(events, timeout)
 
     -- ensure opened
@@ -661,7 +714,10 @@ function _instance:kill()
     return true
 end
 
--- close socket
+-- close the socket
+--
+-- @return      true on success
+--
 function _instance:close()
 
     -- ensure opened
@@ -744,23 +800,40 @@ function socket.open(socktype, family)
 end
 
 -- open tcp socket
+--
+-- @param opt   the options, e.g. {family = socket.IPV6}
+-- @return      the socket instance, or nil and error info
+--
 function socket.tcp(opt)
     opt = opt or {}
     return socket.open(socket.TCP, opt.family or socket.IPV4)
 end
 
 -- open udp socket
+--
+-- @param opt   the options, e.g. {family = socket.IPV6}
+-- @return      the socket instance, or nil and error info
+--
 function socket.udp(opt)
     opt = opt or {}
     return socket.open(socket.UDP, opt.family or socket.IPV4)
 end
 
--- open unix socket
+-- open unix domain socket
+--
+-- @return      the socket instance, or nil and error info
+--
 function socket.unix(opt)
     return socket.open(socket.TCP, socket.UNIX)
 end
 
 -- open and bind tcp socket
+--
+-- @param addr  the bind address, e.g. "0.0.0.0", "127.0.0.1"
+-- @param port  the bind port
+-- @param opt   the options (optional)
+-- @return      the bound socket, or nil and error info
+--
 function socket.bind(addr, port, opt)
     local sock, errors = socket.tcp(opt)
     if not sock then
@@ -775,6 +848,11 @@ function socket.bind(addr, port, opt)
 end
 
 -- open and bind tcp socket from the unix address
+--
+-- @param addr  the unix socket path
+-- @param opt   the options (optional)
+-- @return      the bound socket, or nil and error info
+--
 function socket.bind_unix(addr, opt)
     local sock, errors = socket.unix(opt)
     if not sock then
@@ -789,6 +867,12 @@ function socket.bind_unix(addr, opt)
 end
 
 -- open and connect tcp socket
+--
+-- @param addr  the server address
+-- @param port  the server port
+-- @param opt   the options (optional)
+-- @return      the connected socket, or nil and error info
+--
 function socket.connect(addr, port, opt)
     local sock, errors = socket.tcp(opt)
     if not sock then
@@ -803,6 +887,11 @@ function socket.connect(addr, port, opt)
 end
 
 -- open and connect tcp socket from the unix address
+--
+-- @param addr  the unix socket path
+-- @param opt   the options (optional)
+-- @return      the connected socket, or nil and error info
+--
 function socket.connect_unix(addr, opt)
     local sock, errors = socket.unix(opt)
     if not sock then

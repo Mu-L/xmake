@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      CarbeneHu
 -- @file        check_bigendian.lua
@@ -61,7 +61,12 @@ end
 -- local is_bigendian = check_bigendian()
 -- @endcode
 --
-function main(typename, opt)
+-- check if the target system is big-endian
+--
+-- @param opt   the options, e.g. {target = target}
+-- @return      true if big-endian
+--
+function main(opt)
     local snippets = check_bigendian_template
     local ok, is_bigendian = check_cxxsnippets(snippets, table.join(table.wrap(opt), {binary_match = _byteorder_binary_match}))
     if ok then

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_package.lua
@@ -25,6 +25,7 @@ import("lib.detect.find_path")
 import("lib.detect.pkgconfig")
 import("core.project.target")
 import("package.manager.find_package")
+import("private.core.base.is_cross")
 
 -- get the root directory of the brew packages
 function _brew_pkg_rootdir()
@@ -92,9 +93,12 @@ end
 -- @param opt   the options, e.g. {verbose = true, version = "1.12.x")
 --
 function main(name, opt)
+    opt = opt or {}
+    if is_cross(opt.plat, opt.arch) then
+        return
+    end
 
     -- find the prefix directory of brew
-    opt = opt or {}
     local brew_pkg_rootdir = _brew_pkg_rootdir()
     if not brew_pkg_rootdir then
         return

@@ -29,9 +29,9 @@
   </PropertyGroup>
 
   <PropertyGroup Label="XmakePathsFallback">
-    <XmakeBuilDir Condition="'$(XmakeBuilDir)' == ''">$(XmakeProjectDir)\build</XmakeBuilDir>
-    <XmakeTargetDir Condition="'$(XmakeTargetDir)' == ''">$(XmakeBuilDir)\$(XmakePlat)\$(XmakeArch)\$(XmakeMode)</XmakeTargetDir>
-    <XmakeConfigFileDir Condition="'$(XmakeConfigFileDir)' == ''">$(XmakeBuilDir)\$(XmakePlat)\$(XmakeArch)\$(XmakeMode)</XmakeConfigFileDir>
+    <XmakeBuildDir Condition="'$(XmakeBuildDir)' == ''">$(XmakeProjectDir)\build</XmakeBuildDir>
+    <XmakeTargetDir Condition="'$(XmakeTargetDir)' == ''">$(XmakeBuildDir)\$(XmakePlat)\$(XmakeArch)\$(XmakeMode)</XmakeTargetDir>
+    <XmakeConfigFileDir Condition="'$(XmakeConfigFileDir)' == ''">$(XmakeBuildDir)\$(XmakePlat)\$(XmakeArch)\$(XmakeMode)</XmakeConfigFileDir>
 
     <XmakeConfigDir Condition="'$(XmakeConfigDir)' == ''">$(XMAKE_CONFIGDIR)</XmakeConfigDir>
     <XmakeConfigDir Condition="'$(XmakeConfigDir)' == ''">$(XmakeProjectDir)</XmakeConfigDir>
@@ -58,6 +58,7 @@
     <PlatformToolset Condition="'$(VisualStudioVersion)' == '15.0'">v141</PlatformToolset>
     <PlatformToolset Condition="'$(VisualStudioVersion)' == '16.0'">v142</PlatformToolset>
     <PlatformToolset Condition="'$(VisualStudioVersion)' == '17.0'">v143</PlatformToolset>
+    <PlatformToolset Condition="'$(VisualStudioVersion)' == '18.0'">v145</PlatformToolset>
   </PropertyGroup>
 
   <PropertyGroup Label="AdditionalProps">
@@ -104,13 +105,14 @@
     <ClCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);$(XmakeDefines)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(XmakeIncludeDirs)</AdditionalIncludeDirectories>
+      <ForcedIncludeFiles>$(XmakeForceIncludes)</ForcedIncludeFiles>
       <AdditionalOptions>%(AdditionalOptions) $(XmakeCFlags) $(XmakeCXFlags) $(XmakeCXXFlags)</AdditionalOptions>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx11'))">stdcpp11</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx14'))">stdcpp14</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx17'))">stdcpp17</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx1z'))">stdcpp17</LanguageStandard>
-      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx20'))">stdcpplatest</LanguageStandard>
-      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx2a'))">stdcpplatest</LanguageStandard>
+      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx20'))">stdcpp20</LanguageStandard>
+      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx2a'))">stdcpp20</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx23'))">stdcpplatest</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxx2b'))">stdcpplatest</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('cxxlatest'))">stdcpplatest</LanguageStandard>
@@ -118,8 +120,8 @@
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx14'))">stdcpp14</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx17'))">stdcpp17</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx1z'))">stdcpp17</LanguageStandard>
-      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx20'))">stdcpplatest</LanguageStandard>
-      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx2a'))">stdcpplatest</LanguageStandard>
+      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx20'))">stdcpp20</LanguageStandard>
+      <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx2a'))">stdcpp20</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx23'))">stdcpplatest</LanguageStandard>
       <LanguageStandard Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('gnuxx2b'))">stdcpplatest</LanguageStandard>
       <LanguageStandard_C Condition="'%(LanguageStandard)' == '' And $(XmakeLanguages.Contains('c11'))">stdc11</LanguageStandard_C>
@@ -169,7 +171,7 @@
   <PropertyGroup Label="Path">
     <LibraryPath>$(XmakeLinkDirs);$(LibraryPath)</LibraryPath>
     <OutDir>$(XmakeTargetDir)\</OutDir>
-    <IntDir>$(XmakeBuilDir)\.vs\$(TargetName)\$(XmakeArch)\$(XmakeMode)\</IntDir>
+    <IntDir>$(XmakeBuildDir)\.vs\$(TargetName)\$(XmakeArch)\$(XmakeMode)\</IntDir>
     <SourcePath>$(XmakeSourceDirs);$(SourcePath)</SourcePath>
   </PropertyGroup>
 

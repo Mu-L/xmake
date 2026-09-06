@@ -12,23 +12,14 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        inherit_links.lua
 --
 
--- get values from target
-function _get_values_from_target(target, name)
-    local values = table.wrap(target:get(name))
-    for _, value in ipairs((target:get_from(name, "option::*"))) do
-        table.join2(values, value)
-    end
-    for _, value in ipairs((target:get_from(name, "package::*"))) do
-        table.join2(values, value)
-    end
-    return values
-end
+-- imports
+import("private.utils.target", {alias = "target_utils"})
 
 -- @note we cannot directly set `{interface = true}`, because it will overwrite the previous configuration
 -- https://github.com/xmake-io/xmake/issues/1465
@@ -80,10 +71,24 @@ function main(target)
             end
         end
 
-        _add_export_value(target, "linkdirs", path.directory(targetfile))
+        local implibfile = target:artifactfile("implib")
+        if implibfile then
+            _add_export_value(target, "linkdirs", path.directory(implibfile))
+        else
+            _add_export_value(target, "linkdirs", path.directory(targetfile))
+        end
+
         if target:rule("go") then
             -- we need to add includedirs to support import modules for golang
             _add_export_value(target, "includedirs", path.directory(targetfile))
+        end
+
+        if target:rule("rust") then
+            local cratetype = target:values("rust.cratetype")
+            -- only bin, lib, rlib, dylib can make use of --extern CRATE[=PATH]
+            if cratetype ~= "staticlib" and cratetype ~= "cdylib" then
+                _add_export_value(target, "frameworks", target:targetfile())
+            end
         end
     end
 
@@ -94,8 +99,17 @@ function main(target)
     --
     if target:data("inherit.links.exportlinks") ~= false then
         if target:is_static() or target:is_object() then
-            for _, name in ipairs({"rpathdirs", "frameworkdirs", "frameworks", "linkdirs", "links", "syslinks", "ldflags", "shflags"}) do
-                local values = _get_values_from_target(target, name)
+            local export_values = {"rpathdirs", "frameworkdirs", "frameworks", "syslinks", "shflags"};
+
+            if target:data("inherit.links.export_static") ~= false then
+                local link_settings = {"linkdirs", "links", "ldflags"}
+                for _, link_setting in ipairs(link_settings) do
+                    table.insert(export_values, link_setting)
+                end
+            end
+
+            for _, name in ipairs(export_values) do
+                local values = target_utils.get_values_from_target(target, name)
                 if values and #values > 0 then
                     _add_export_values(target, name, values)
                 end
@@ -104,7 +118,7 @@ function main(target)
     end
 
     -- export rpathdirs for all shared library
-    if target:is_binary() then
+    if target:is_binary() and target:policy("build.rpath") then
         local targetdir = target:targetdir()
         for _, dep in ipairs(target:orderdeps({inherit = true})) do
             if dep:kind() == "shared" then

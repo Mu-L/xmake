@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_hdk.lua
@@ -32,7 +32,12 @@ function _find_hdkdir(sdkdir)
     if not sdkdir then
         if not sdkdir then
             if is_host("macosx") then
-                sdkdir = find_directory("native", "~/Library/Huawei/Sdk/*/*")
+                local paths = {
+                    "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony",
+                    "~/Library/OpenHarmony/Sdk/*",
+                    "~/Library/Huawei/Sdk/*/*" -- for old version, deprecated
+                }
+                sdkdir = find_directory("native", paths)
             elseif is_host("windows") then
                 sdkdir = find_directory("native", "~/Huawei/Sdk/*/*")
             end
@@ -95,17 +100,16 @@ function main(sdkdir, opt)
     if hdk and hdk.sdkdir then
         config.set("hdk", hdk.sdkdir, {force = true, readonly = true})
         if opt.verbose or option.get("verbose") then
-            cprint("checking for Harmony SDK directory ... ${color.success}%s", hdk.sdkdir)
+            cprint("checking for Harmony SDK ... ${color.success}%s", hdk.sdkdir)
         end
     else
         if opt.verbose or option.get("verbose") then
-            cprint("checking for Harmony SDK directory ... ${color.nothing}${text.nothing}")
+            cprint("checking for Harmony SDK ... ${color.nothing}${text.nothing}")
         end
     end
 
     -- save to cache
     cacheinfo.hdk = hdk or false
     detectcache:set(key, cacheinfo)
-    detectcache:save()
     return hdk
 end

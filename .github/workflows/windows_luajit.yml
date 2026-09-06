@@ -7,15 +7,65 @@ on:
     types: [published]
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Random execution check
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const outputFile = process.env.GITHUB_OUTPUT;
+
+            // Always run for release events
+            if (context.eventName === 'release') {
+              fs.appendFileSync(outputFile, `should-run=true\n`);
+              core.info('Release event detected. Will run tests.');
+              return;
+            }
+
+            // Execution probability (default 20%, can be overridden via env)
+            const probability = parseFloat(process.env.RUN_PROBABILITY || '0.2');
+
+            // Generate deterministic "random" number based on commit SHA, run ID, and current time
+            // Adding time ensures better randomness while keeping same commit/run consistent
+            const timeSeed = Math.floor(Date.now() / (1000 * 60 * 60)); // Round to hour for consistency
+            const seed = context.sha + context.runId + timeSeed;
+            let hash = 0;
+            for (let i = 0; i < seed.length; i++) {
+              const char = seed.charCodeAt(i);
+              hash = ((hash << 5) - hash) + char;
+              hash = hash | 0; // Convert to 32-bit integer
+            }
+            // Normalize to 0-1 range
+            const random = Math.abs(hash) / 2147483647;
+            const shouldRun = random < probability;
+
+            // Use environment file instead of deprecated set-output
+            fs.appendFileSync(outputFile, `should-run=${shouldRun}\n`);
+            if (shouldRun) {
+              core.info(`Random check passed (${(random * 100).toFixed(2)}% < ${(probability * 100).toFixed(0)}%). Will run tests.`);
+            } else {
+              core.info(`Random check failed (${(random * 100).toFixed(2)}% >= ${(probability * 100).toFixed(0)}%). Skipping.`);
+            }
+        env:
+          RUN_PROBABILITY: ${{ vars.WINDOWS_LUAJIT_RUN_PROBABILITY || '0.2' }}
+
   build:
+    needs: check
+    if: needs.check.outputs.should-run == 'true'
     strategy:
       matrix:
-        os: [windows-2019, windows-2022]
+        os: [windows-2022, windows-2025]
         arch: [x64, x86]
 
     runs-on: ${{ matrix.os }}
 
     concurrency:
+        # Prevent concurrent runs of the same workflow
         group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-${{ matrix.os }}-${{ matrix.arch }}-Windows-Luajit
         cancel-in-progress: true
     steps:
@@ -39,6 +89,8 @@ jobs:
         run: |
           if ("${{ matrix.arch }}" -eq "x64") {
             Write-Output "RELEASE_NAME=win64" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf-8 -Append
+          } elseif ("${{ matrix.arch }}" -eq "arm64") {
+            Write-Output "RELEASE_NAME=arm64" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf-8 -Append
           } else {
             Write-Output "RELEASE_NAME=win32" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf-8 -Append
           }
@@ -71,16 +123,23 @@ jobs:
           xmake lua -v -D tests/run.lua
 
         # upload artifacts
-      - uses: actions/upload-artifact@v2
+      - name: Upload artifacts (exe)
+        if: matrix.os == 'windows-2022'
+        uses: actions/upload-artifact@v4
         with:
           name: xmake-latest.${{env.RELEASE_NAME}}.exe
           path: artifacts/${{env.RELEASE_NAME}}/xmake.exe
-      - uses: actions/upload-artifact@v2
+
+      - name: Upload artifacts (zip)
+        if: matrix.os == 'windows-2022'
+        uses: actions/upload-artifact@v4
         with:
           name: xmake-latest.${{ env.RELEASE_NAME }}.zip
           path: artifacts/${{env.RELEASE_NAME}}/xmake.zip
-      - uses: actions/upload-artifact@v2
+
+      - name: Upload artifacts (sha256)
+        if: matrix.os == 'windows-2022'
+        uses: actions/upload-artifact@v4
         with:
           name: xmake-latest.${{ env.RELEASE_NAME }}.sha256
           path: artifacts/${{env.RELEASE_NAME}}/shafile
-

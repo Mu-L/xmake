@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -26,6 +26,7 @@ import("core.project.project")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
 import("actions.build.main", {rootdir = os.programdir(), alias = "build_action"})
 import("xpack")
+import("async.runjobs")
 
 -- get packages
 function _get_packages()
@@ -52,7 +53,7 @@ end
 function _load_package(package)
 
     -- ensure build and output directories
-    os.tryrm(package:buildir())
+    os.tryrm(package:builddir())
     os.mkdir(package:outputdir())
 
     -- load it
@@ -85,9 +86,17 @@ function _pack_package(package)
 end
 
 function _pack_packages()
-    for _, package in ipairs(_get_packages()) do
-        _pack_package(package)
+    local packages = _get_packages()
+    local jobs = option.get("jobs")
+    if jobs then
+        jobs = tonumber(jobs)
     end
+    runjobs("pack_packages", function (index)
+        local package = packages[index]
+        if package then
+            _pack_package(package)
+        end
+    end, {total = #packages, comax = jobs or os.default_njob(), isolate = true})
 end
 
 function _build_targets()
@@ -112,11 +121,11 @@ function main()
         return remote_build_action()
     end
 
+    -- load config first
+    task.run("config", {}, {disable_dump = true})
+
     -- lock the whole project
     project.lock()
-
-    -- load config first
-    config.load()
 
     -- enter project directory
     local oldir = os.cd(project.directory())
@@ -125,9 +134,6 @@ function main()
     if option.get("autobuild") then
         _build_targets()
     end
-
-    -- load targets
-    project.load_targets()
 
     -- do pack
     _pack_packages()
@@ -139,5 +145,3 @@ function main()
     project.unlock()
     cprint("${color.success}pack ok")
 end
-
-

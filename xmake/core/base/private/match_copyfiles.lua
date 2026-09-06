@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        match_copyfiles.lua
@@ -50,6 +50,7 @@ function match_copyfiles(instance, filetype, outputdir, opt)
     local srcfiles_removed = {}
     local removed_count = 0
     for _, copyfile in ipairs(table.wrap(copyfiles)) do
+        local copyfile = copyfile
 
         -- mark as removed files?
         local removed = false
@@ -57,6 +58,20 @@ function match_copyfiles(instance, filetype, outputdir, opt)
         if copyfile:startswith(prefix) then
             copyfile = copyfile:sub(#prefix + 1)
             removed = true
+        end
+
+        -- keep the raw pattern for the extraconf lookup, because the extraconf
+        -- is indexed by the value before filtering the builtin variables
+        local rawfile = copyfile
+
+        -- filter the builtin variables in path, e.g. $(projectdir)/xxx
+        --
+        -- @note we must filter it before parsing the root directory and stripping
+        -- the parentheses, because the builtin variable also uses `$(...)`
+        --
+        -- @see https://github.com/xmake-io/xmake/issues/7632
+        if opt.filter then
+            copyfile = opt.filter(copyfile)
         end
 
         -- get the root directory
@@ -83,21 +98,19 @@ function match_copyfiles(instance, filetype, outputdir, opt)
                     -- add the source copied files
                     table.join2(srcfiles, srcpaths)
 
-                    -- the copied directory exists?
-                    if outputdir then
+                    -- get the file info
+                    local fileinfo = extrainfo[rawfile] or {}
 
-                        -- get the file info
-                        local fileinfo = extrainfo[copyfile] or {}
+                    -- get the prefix directory
+                    local prefixdir = fileinfo.prefixdir
+                    if fileinfo.rootdir then
+                        rootdir = fileinfo.rootdir
+                    end
 
-                        -- get the prefix directory
-                        local prefixdir = fileinfo.prefixdir
-                        if fileinfo.rootdir then
-                            rootdir = fileinfo.rootdir
-                        end
+                    -- add the destinate copied files
+                    for _, srcpath in ipairs(srcpaths) do
 
-                        -- add the destinate copied files
-                        for _, srcpath in ipairs(srcpaths) do
-
+                        if outputdir then
                             -- get the destinate directory
                             local dstdir = outputdir
                             if prefixdir then
@@ -125,8 +138,9 @@ function match_copyfiles(instance, filetype, outputdir, opt)
 
                             -- add it
                             table.insert(dstfiles, dstfile)
-                            table.insert(fileinfos, fileinfo)
                         end
+
+                        table.insert(fileinfos, fileinfo)
                     end
                 end
             end

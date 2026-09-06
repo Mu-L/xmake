@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -22,32 +22,31 @@ task("uninstall")
     set_category("action")
     on_run("main")
     set_menu {
-        usage = "xmake uninstall|u [options] [target]",
+        usage = "xmake uninstall|u [options] [targets]",
         description = "Uninstall the project binary files.",
         shortname = 'u',
         options = {
-            {nil, "installdir", "kv", nil   , "Set the install directory.",
-                                              "e.g.",
-                                              "    $ xmake uninstall -o /usr/local",
-                                              "or  $ DESTDIR=/usr/local xmake uninstall",
-                                              "or  $ INSTALLDIR=/usr/local xmake uninstall" },
-            {'g', "group",      "kv",  nil  , "Uninstall all targets of the given group. It support path pattern matching.",
-                                              "e.g.",
-                                              "    xmake uninstall -g test",
-                                              "    xmake uninstall -g test_*",
-                                              "    xmake uninstall --group=benchmark/*"     },
-            {'p', "prefix",     "kv", nil   , "Set the prefix directory.",
-                                              "e.g.",
-                                              "    $ xmake uninstall --prefix=local",
-                                              "or  $ PREFIX=local xmake uninstall"          },
-            {nil, "admin",      "k",  nil   , "Try to request administrator permission to uninstall"},
-            {                                                                               },
-            {nil, "target",     "v",  nil   , "The target name. It will uninstall all default targets if this parameter is not specified.",
-                                              values = function (complete, opt)
-                                                return import("private.utils.complete_helper.targets")(complete, opt)
-                                              end}
+            {nil, "installdir", "kv", nil, "Set the install directory.",
+                                           "e.g.",
+                                           "    $ xmake uninstall --installdir=/usr/local",
+                                           "or  $ DESTDIR=/usr/local xmake uninstall",
+                                           "or  $ INSTALLDIR=/usr/local xmake uninstall"},
+            {nil, "bindir",     "kv", nil, "Set install binaries directory in INSTALLDIR/DIR. (default: ${installdir}/bin)"},
+            {nil, "libdir",     "kv", nil, "Set install libraries directory in INSTALLDIR/DIR. (default: ${installdir}/lib)"},
+            {nil, "includedir", "kv", nil, "Set install includes directory in INSTALLDIR/DIR. (default: ${installdir}/include)"},
+            {'g', "group",      "kv", nil, "Uninstall all targets of the given group. It supports path pattern matching.",
+                                           "e.g.",
+                                           "    xmake uninstall -g test",
+                                           "    xmake uninstall -g test_*",
+                                           "    xmake uninstall --group=benchmark/*"},
+            {nil, "admin",      "k",  nil, "Try to request administrator permission to uninstall"},
+            {},
+            {nil, "targets",    "vs", nil, "The target names. It will uninstall all default targets if this parameter is not specified.",
+                                           "e.g.",
+                                           "    xmake uninstall target1 target2 ...",
+                                           values = function (complete, opt)
+                                               return import("private.utils.complete_helper.targets")(complete, opt)
+                                           end},
         }
     }
-
-
 

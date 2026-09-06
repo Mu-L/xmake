@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,7 +21,7 @@
 platform("linux")
     set_os("linux")
     set_hosts("macosx", "linux", "windows", "bsd")
-    set_archs("i386", "x86_64", "armv7", "armv7s", "arm64-v8a", "mips", "mips64", "mipsel", "mips64el", "loong64")
+    set_archs("i386", "x86_64", "armv7", "armv7s", "arm64", "mips", "mips64", "mipsel", "mips64el", "loong64", "riscv64", "s390x", "ppc", "ppc64", "ppc64el", "sparc64")
 
     set_formats("static", "lib$(name).a")
     set_formats("object", "$(name).o")
@@ -29,15 +29,25 @@ platform("linux")
     set_formats("symbol", "$(name).sym")
 
     set_installdir("/usr/local")
-    set_toolchains("envs", "cross", "gcc", "clang", "yasm", "nasm", "fasm", "cuda", "go", "rust", "swift", "gfortran", "zig", "fpc", "nim")
+
+    -- The cross toolchain should be placed after the host toolchain.
+    -- otherwise, if the host toolchain is explicitly loaded in the target,
+    -- the cross toolchain will be selected incorrectly in toolchain.lua.
+    --
+    -- TODO Perhaps we should handle it better, or remove the cross toolchain.
+    set_toolchains("envs", "gcc", "clang",
+        "cross", "yasm", "nasm", "fasm", "cuda", "ascendc", "go", "rust", "swift",
+        "gfortran", "zig", "fpc", "nim", "dotnet")
 
     set_menu {
                 config =
                 {
                     {category = "Cuda SDK Configuration"                                            }
                 ,   {nil, "cuda",           "kv", "auto",       "The Cuda SDK Directory"            }
+                ,   {nil, "cuda_sdkver",    "kv", "auto",       "The Cuda SDK Version"              }
                 ,   {category = "Qt SDK Configuration"                                              }
                 ,   {nil, "qt",             "kv", "auto",       "The Qt SDK Directory"              }
+                ,   {nil, "qt_host",        "kv", "auto",       "The Qt Host SDK Directory"         }
                 ,   {nil, "qt_sdkver",      "kv", "auto",       "The Qt SDK Version"                }
                 ,   {category = "Vcpkg Configuration"                                               }
                 ,   {nil, "vcpkg",          "kv", "auto",       "The Vcpkg Directory"               }
@@ -49,9 +59,8 @@ platform("linux")
                 ,   {nil, "cuda",           "kv", "auto",       "The Cuda SDK Directory"            }
                 ,   {category = "Qt SDK Configuration"                                              }
                 ,   {nil, "qt",             "kv", "auto",       "The Qt SDK Directory"              }
+                ,   {nil, "qt_host",        "kv", "auto",       "The Qt Host SDK Directory"         }
                 ,   {category = "Vcpkg Configuration"                                               }
                 ,   {nil, "vcpkg",          "kv", "auto",       "The Vcpkg Directory"               }
                 }
             }
-
-

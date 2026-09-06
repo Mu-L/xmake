@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check_sizeof.lua
@@ -62,6 +62,12 @@ end
 -- local size = check_sizeof("long")
 -- local size = check_sizeof("std::string", {includes = "string"})
 -- @endcode
+--
+-- check the size of a C/C++ type
+--
+-- @param typename   the type name, e.g. "int", "size_t"
+-- @param opt        the options, e.g. {includes = {"stddef.h"}, target = target}
+-- @return           the type size in bytes, or -1
 --
 function main(typename, opt)
     local snippets = check_sizeof_template:gsub('${TYPE}', typename)

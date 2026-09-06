@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,24 +21,6 @@
 -- define rule: utils.compiler.runtime
 rule("utils.compiler.runtime")
     on_config(function (target)
-        local runtimes = get_config("runtimes")
-        if not runtimes and target:is_plat("windows") then
-            runtimes = get_config("vs_runtime")
-            if runtimes then
-                wprint("--vs_runtime=%s is deprecated, please use --runtimes=%s", runtimes, runtimes)
-            end
-        end
-        if not runtimes and target:is_plat("android") then
-            runtimes = get_config("ndk_cxxstl")
-            if runtimes then
-                wprint("--ndk_cxxstl=%s is deprecated, please use --runtimes=%s", runtimes, runtimes)
-            end
-        end
-        if runtimes and not target:get("runtimes") then
-            if type(runtimes) == "string" then
-                runtimes = runtimes:split(",", {plain = true})
-            end
-            target:set("runtimes", runtimes)
-        end
+        import("rules.c++.config.runtime", {rootdir = os.programdir(), alias = "config_runtime"})
+        config_runtime(target)
     end)
-

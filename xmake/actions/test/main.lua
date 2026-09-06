@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -30,6 +30,32 @@ import("async.runjobs")
 import("private.action.run.runenvs")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
 import("actions.build.main", {rootdir = os.programdir(), alias = "build_action"})
+import("utils.progress")
+import("private.utils.target", {alias = "target_utils"})
+
+-- Load expected outputs from files for pass_output_files/fail_output_files.
+-- Resolve relative paths from the target scriptdir.
+-- https://github.com/xmake-io/xmake/issues/7255
+function _load_output_files(target, files, opt)
+    files = table.wrap(files)
+    if #files == 0 then
+        return {}
+    end
+    local scriptdir = target and target:scriptdir() or nil
+    local outputs = {}
+    for _, file in ipairs(files) do
+        local filepath = path.absolute(file, scriptdir)
+        if not os.isfile(filepath) then
+            raise("file not found: %s", filepath)
+        end
+        local data = io.readfile(filepath)
+        if opt.trim_output and data then
+            data = data:trim()
+        end
+        table.insert(outputs, data)
+    end
+    return outputs
+end
 
 -- test target
 function _do_test_target(target, opt)
@@ -56,20 +82,33 @@ function _do_test_target(target, opt)
     local rundir = opt.rundir or target:rundir()
     local targetfile = path.absolute(target:targetfile())
     local runargs = table.wrap(opt.runargs or target:get("runargs"))
-    local outfile = os.tmpfile()
-    local errfile = os.tmpfile()
+    local autogendir = path.join(target:autogendir(), "tests")
+    local logname = opt.name:gsub("[/\\>=<|%*]", "_")
+    local outfile = path.absolute(path.join(autogendir, logname .. ".out"))
+    local errfile = path.absolute(path.join(autogendir, logname .. ".err"))
+    if opt.realtime_output then
+        outfile = nil
+        errfile = nil
+        assert(not opt.pass_outputs and not opt.fail_outputs and not opt.pass_output_files and not opt.fail_output_files,
+            "add_tests(%s): we cannot check pass_outputs/fail_outputs in real output mode", opt.name)
+    else
+        os.tryrm(outfile)
+        os.tryrm(errfile)
+    end
+    os.mkdir(autogendir)
+    local should_fail = opt.should_fail or false
     local run_timeout = opt.run_timeout
     local ok, syserrors = os.execv(targetfile, runargs, {try = true, timeout = run_timeout,
         curdir = rundir, envs = envs, stdout = outfile, stderr = errfile})
-    local outdata = os.isfile(outfile) and io.readfile(outfile) or ""
-    local errdata = os.isfile(errfile) and io.readfile(errfile) or ""
+    local outdata = (outfile and os.isfile(outfile)) and io.readfile(outfile) or ""
+    local errdata = (errfile and os.isfile(errfile)) and io.readfile(errfile) or ""
     if outdata and #outdata > 0 then
-        vprint(outdata)
+        opt.stdout = outdata
     end
     if errdata and #errdata > 0 then
-        vprint(errdata)
+        opt.stderr = errdata
     end
-    if opt.trim_output then
+    if opt.trim_output and outdata then
         outdata = outdata:trim()
     end
     if ok ~= 0 then
@@ -85,13 +124,19 @@ function _do_test_target(target, opt)
             end
         end
     end
-    os.tryrm(outfile)
-    os.tryrm(errfile)
+    if outfile then
+        os.tryrm(outfile)
+    end
+    if errfile then
+        os.tryrm(errfile)
+    end
 
+    local passed
     if ok == 0 then
-        local passed
         local pass_outputs = table.wrap(opt.pass_outputs)
         local fail_outputs = table.wrap(opt.fail_outputs)
+        table.join2(pass_outputs, _load_output_files(target, opt.pass_output_files, opt))
+        table.join2(fail_outputs, _load_output_files(target, opt.fail_output_files, opt))
         for _, pass_output in ipairs(pass_outputs) do
             if opt.plain then
                 if pass_output == outdata then
@@ -158,15 +203,28 @@ function _do_test_target(target, opt)
                 end
             end
         end
-        if errors and #errors > 0 and (option.get("verbose") or option.get("diagnosis")) then
-            cprint(errors)
+    end
+
+    if should_fail then
+        if not passed then
+            passed = true
+            errors = nil -- clear errors, since failure was expected
+        else
+            passed = false
+            local extra_info = string.format("Test %s unexpectedly passed (should fail)", opt.name)
+            if errors and #errors > 0 then
+                errors = errors .. "\n" .. extra_info
+            else
+                errors = extra_info
+            end
         end
-        return passed
     end
-    if errors and #errors > 0 and (option.get("verbose") or option.get("diagnosis")) then
-        cprint(errors)
+
+    if errors and #errors > 0 then
+        opt.errors = errors
     end
-    return false
+
+    return passed
 end
 
 -- test target
@@ -250,6 +308,21 @@ function _run_test(target, test)
     return passed
 end
 
+function _show_output(testinfo, kind)
+    local output = testinfo[kind]
+    if output then
+        if option.get("diagnosis") then
+            local target = testinfo.target
+            local autogendir = path.join(target:autogendir(), "tests")
+            local logfile = path.join(autogendir, testinfo.name .. "." .. kind .. ".log")
+            io.writefile(logfile, output)
+            print("%s: %s", kind, logfile)
+        elseif option.get("verbose") then
+            io.write(kind .. ": " .. output .. "\n")
+        end
+    end
+end
+
 -- run tests
 function _run_tests(tests)
     local ordertests = {}
@@ -265,14 +338,20 @@ function _run_tests(tests)
         return
     end
 
+    -- temporarily switch to scroll mode to avoid progress refresh interference with test output
+    -- @see https://github.com/xmake-io/xmake/issues/7045
+    progress.set_style("scroll")
+
     -- do test
     local spent = os.mclock()
     print("running tests ...")
-    local report = {passed = 0, total = #ordertests}
+    local report = {passed = 0, total = #ordertests, tests = {}}
     local jobs = tonumber(option.get("jobs")) or os.default_njob()
     runjobs("run_tests", function (index, total, opt)
         local testinfo = ordertests[index]
         if testinfo then
+            progress.show(opt.progress, "running.test %s", testinfo.name)
+
             local target = testinfo.target
             testinfo.target = nil
             local spent = os.mclock()
@@ -281,15 +360,15 @@ function _run_tests(tests)
             if passed then
                 report.passed = report.passed + 1
             end
-            local status_color = passed and "${color.success}" or "${color.failure}"
-            local progress_format = status_color .. theme.get("text.build.progress_format") .. ":${clear} "
-            if option.get("verbose") then
-                progress_format = progress_format .. "${dim}"
-            end
-            local progress = opt.progress:percent()
-            local padding = maxwidth - #testinfo.name
-            cprint(progress_format .. "%s%s .................................... " .. status_color .. "%s${clear} ${bright}%0.3fs",
-                progress, testinfo.name, (" "):rep(padding), passed and "passed" or "failed", spent / 1000)
+            table.insert(report.tests, {
+                target = target,
+                name = testinfo.name,
+                passed = passed,
+                spent = spent,
+                should_fail = testinfo.should_fail or false,
+                stdout = testinfo.stdout,
+                stderr = testinfo.stderr,
+                errors = testinfo.errors})
 
             -- stop it if be failed?
             if not passed then
@@ -304,14 +383,101 @@ function _run_tests(tests)
         end
     end, {total = #ordertests,
           comax = jobs,
-          isolate = true})
+          isolate = true,
+          progress_refresh = true})
+
+    -- restore the original progress style
+    progress.restore_style()
 
     -- generate report
     spent = os.mclock() - spent
     local passed_rate = math.floor(report.passed * 100 / report.total)
+
+    local failed_tests = {}
+    local expected_failures = {}
+    local unexpected_passes = {}
+
     print("")
-    cprint("${color.success}%d%%${clear} tests passed, ${color.failure}%d${clear} tests failed out of ${bright}%d${clear}, spent ${bright}%0.3fs",
-        passed_rate, report.total - report.passed, report.total, spent / 1000)
+    print("report of tests:")
+    for idx, testinfo in ipairs(report.tests) do
+        -- Result label and color logic
+        local result_label
+        local result_color
+
+        if testinfo.should_fail then
+            if testinfo.passed then
+                table.insert(expected_failures, testinfo.name)
+                result_label = "expected failure"
+                result_color = "${color.warning}"
+            else
+                table.insert(unexpected_passes, testinfo.name)
+                result_label = "unexpected pass"
+                result_color = "${color.failure}"
+            end
+        else
+            if testinfo.passed then
+                result_label = "passed"
+                result_color = "${color.success}"
+            else
+                result_label = "failed"
+                result_color = "${color.failure}"
+                table.insert(failed_tests, testinfo.name)
+            end
+        end
+
+        local progress_format = result_color .. theme.get("text.build.progress_format") .. ":${clear} "
+        if option.get("verbose") or option.get("diagnosis") then
+            progress_format = progress_format .. "${dim}"
+        end
+
+        -- Build aligned output line
+        local padding = maxwidth - #testinfo.name
+        local filler = string.rep(".", padding)
+        local progress_percent = math.floor(idx * 100 / #report.tests)
+        cprint(progress_format .. "%s %s " .. result_color .. "%s${clear} ${bright}%0.3fs",
+            progress_percent, testinfo.name, filler, result_label, testinfo.spent / 1000)
+
+        _show_output(testinfo, "stdout")
+        _show_output(testinfo, "stderr")
+        _show_output(testinfo, "errors")
+    end
+
+    -- Print the summary
+    if #failed_tests > 0 or #expected_failures > 0 or #unexpected_passes > 0 then
+        cprint("\nDetailed summary:")
+    end
+    if #failed_tests > 0 then
+        cprint("${color.failure}Failed tests:${clear}")
+        for _, name in ipairs(failed_tests) do
+            print(" - " .. name)
+        end
+    end
+
+    if #unexpected_passes > 0 then
+        cprint("${color.failure}Unexpected passes:${clear}")
+        for _, name in ipairs(unexpected_passes) do
+            print(" - " .. name)
+        end
+    end
+
+    if #expected_failures > 0 then
+        cprint("${color.warning}Expected failures:${clear}")
+        for _, name in ipairs(expected_failures) do
+            print(" - " .. name)
+        end
+    end
+
+    local summary = string.format("\n${color.success}%d%%%%${clear} tests passed, ${color.failure}%d${clear} test(s) failed", passed_rate, #failed_tests)
+    if #unexpected_passes > 0 then
+        summary = summary .. string.format(", ${color.failure}%d${clear} unexpected pass(es)", #unexpected_passes)
+    end
+    if #expected_failures > 0 then
+        summary = summary .. string.format(", ${color.warning}%d${clear} expected failure(s)", #expected_failures)
+    end
+
+    summary = summary .. string.format(" out of ${bright}%d${clear}, spent ${bright}%0.3fs", report.total, spent / 1000)
+    cprint(summary)
+
     local return_zero = project.policy("test.return_zero_on_failure")
     if not return_zero and report.passed < report.total then
         raise()
@@ -335,23 +501,8 @@ function _try_build_target(targetname)
     return passed, errors
 end
 
-function main()
-
-    -- do action for remote?
-    if remote_build_action.enabled() then
-        return remote_build_action()
-    end
-
-    -- lock the whole project
-    project.lock()
-
-    -- load config first
-    task.run("config", {}, {disable_dump = true})
-
-    -- load targets
-    project.load_targets()
-
-    -- get tests
+-- get tests, export this for the `project` plugin
+function get_tests()
     local tests = {}
     local group_pattern = option.get("group")
     if group_pattern then
@@ -369,7 +520,7 @@ function main()
                     local scriptdir = target:scriptdir()
                     target_new:name_set(target:name() .. "_" .. name)
                     for _, file in ipairs(extra.files) do
-                        file = path.absolute(file, scriptdir)
+                        local file = path.absolute(file, scriptdir)
                         file = path.relative(file, os.projectdir())
                         target_new:add("files", file, {defines = extra.defines,
                                                        cflags = extra.cflags,
@@ -380,12 +531,12 @@ function main()
                         project.target_add(target_new)
                     end
                     for _, file in ipairs(extra.remove_files) do
-                        file = path.absolute(file, scriptdir)
+                        local file = path.absolute(file, scriptdir)
                         file = path.relative(file, os.projectdir())
                         target_new:remove("files", file)
                     end
                     if extra.kind then
-                        target_new:set("kind", kind)
+                        target_new:set("kind", extra.kind)
                     end
                     if extra.frameworks then
                         target_new:add("frameworks", extra.frameworks)
@@ -399,6 +550,7 @@ function main()
                     if extra.packages then
                         target_new:add("packages", extra.packages)
                     end
+                    target_utils.config_target(target_new)
                     testinfo.target = target_new
                 end
             end
@@ -412,11 +564,29 @@ function main()
             end
         end
     end
+    return tests
+end
+
+function main()
+
+    -- do action for remote?
+    if remote_build_action.enabled() then
+        return remote_build_action()
+    end
+
+    -- load config first
+    task.run("config", {}, {disable_dump = true})
+
+    -- lock the whole project
+    project.lock()
+
+    -- get tests
+    local tests = get_tests()
     local test_patterns = option.get("tests")
     if test_patterns then
         local tests_new = {}
         for _, pattern in ipairs(test_patterns) do
-            pattern = "^" .. path.pattern(pattern) .. "$"
+            local pattern = "^" .. path.pattern(pattern) .. "$"
             for name, testinfo in pairs(tests) do
                 if name:match(pattern) then
                     tests_new[name] = testinfo
@@ -432,7 +602,7 @@ function main()
     -- build targets with the given tests first
     local targetnames = {}
     for _, testinfo in table.orderpairs(tests) do
-        local targetname = testinfo.target:name()
+        local targetname = testinfo.target:fullname()
         if testinfo.build_should_pass then
             local passed, errors = _try_build_target(targetname)
             testinfo.passed = passed
@@ -460,4 +630,3 @@ function main()
     -- unlock the whole project
     project.unlock()
 end
-
