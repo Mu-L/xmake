@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        load.lua
@@ -61,6 +61,7 @@ function _get_apis()
     ,   "package.add_defines"
     ,   "package.add_undefines"
     ,   "package.add_frameworks"
+    ,   "package.add_vectorexts"
     ,   "package.add_rpathdirs"
     ,   "package.add_linkdirs"
     ,   "package.add_includedirs" --@note we need not uses paths for package, see https://github.com/xmake-io/xmake/issues/717
@@ -100,6 +101,7 @@ function _get_apis()
     ,   "target.add_includedirs"
     ,   "target.add_sysincludedirs"
     ,   "target.add_frameworkdirs"
+    ,   "target.add_embeddirs"
         -- option.add_xxx
     ,   "option.add_linkdirs"
     ,   "option.add_includedirs"

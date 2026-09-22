@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xpack.lua
@@ -32,11 +32,22 @@ import("filter")
 import("xpack_component")
 
 -- define module
-local xpack = xpack or object {_init = {"_name", "_info"}}
+local xpack = xpack or object {_init = {"_name", "_info", "_namespace"}}
 
 -- get name
 function xpack:name()
     return self._name
+end
+
+-- get namespace
+function xpack:namespace()
+    return self._namespace
+end
+
+-- get fullname
+function xpack:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
 end
 
 -- get values
@@ -131,7 +142,7 @@ function xpack:targets()
         local targetnames = self:get("targets")
         if targetnames then
             for _, name in ipairs(targetnames) do
-                local target = project.target(name)
+                local target = project.target(name, {namespace = self:namespace()})
                 if target then
                     table.insert(targets, target)
                 else
@@ -148,7 +159,7 @@ end
 function xpack:target(name)
     local targetnames = self:get("targets")
     if targetnames and table.contains(table.wrap(targetnames), name) then
-        return project.target(name)
+        return project.target(name, {namespace = self:namespace()})
     end
 end
 
@@ -190,19 +201,46 @@ function xpack:inputkind()
     local inputkind = self:get("inputkind")
     if inputkind == nil then
         local inputkinds = {
-            nsis  = "binary",
-            zip   = "binary",
-            targz = "binary",
-            srczip = "source",
+            wix      = "binary",
+            nsis     = "binary",
+            zip      = "binary",
+            targz    = "binary",
+            tarxz    = "binary",
+            dmg      = "binary",
+            appimage = "binary",
+            srczip   = "source",
             srctargz = "source",
-            runself = "source",
-            deb = "source",
-            srpm = "source",
-            rpm = "source"
+            srctarxz = "source",
+            runself  = "source",
+            deb      = "source",
+            srpm     = "source",
+            rpm      = "source"
         }
         inputkind = inputkinds[self:format()] or "binary"
     end
     return inputkind
+end
+
+-- get the output kind
+function xpack:outputkind()
+    local outputkinds = {
+        wix      = "binary",
+        nsis     = "binary",
+        zip      = "binary",
+        targz    = "binary",
+        tarxz    = "binary",
+        dmg      = "binary",
+        appimage = "binary",
+        srczip   = "source",
+        srctargz = "source",
+        srctarxz = "source",
+        runself  = "source",
+        deb      = "binary",
+        srpm     = "source",
+        rpm      = "binary"
+    }
+    local outputkind = outputkinds[self:format()] or "binary"
+    return outputkind
 end
 
 -- pack from source files?
@@ -215,16 +253,36 @@ function xpack:from_binary()
     return self:inputkind() == "binary"
 end
 
+-- pack with source files?
+function xpack:with_source()
+    return self:outputkind() == "source"
+end
+
+-- pack with binary files?
+function xpack:with_binary()
+    return self:outputkind() == "binary"
+end
+
 -- get the build directory
+function xpack:builddir()
+    local dir = path.join(config.builddir(), ".xpack", self:name())
+    if self:format() then
+        dir = path.join(dir, self:format())
+    end
+    return dir
+end
+
+-- get the build directory (deprecated)
 function xpack:buildir()
-    return path.join(config.buildir(), ".xpack", self:name())
+    wprint("xpack:buildir() has been deprecated, please use xpack:builddir()")
+    return self:builddir()
 end
 
 -- get the output directory
 function xpack:outputdir()
     local outputdir = option.get("outputdir")
     if outputdir == nil then
-        outputdir = path.join(config.buildir(), "xpack", self:name())
+        outputdir = path.join(config.builddir(), "xpack", self:name())
     end
     return outputdir
 end
@@ -234,7 +292,7 @@ function xpack:basename()
     local basename = option.get("basename") or self:get("basename")
     if basename == nil then
         basename = self:name()
-        if self:from_source() then
+        if self:with_source() then
             basename = basename .. "-src"
         end
         local version = self:version()
@@ -318,28 +376,21 @@ function xpack:specvars()
     return specvars
 end
 
--- get the specfile path
-function xpack:specfile()
-    local extensions = {
-        nsis = ".nsi",
-        srpm = ".spec",
-        rpm = ".spec",
-        runself = ".lsm"
-    }
-    local extension = extensions[self:format()] or ".spec"
-    return self:get("specfile") or path.join(self:buildir(), self:basename() .. extension)
-end
-
 -- get the extension
 function xpack:extension()
     local extension = self:get("extension")
     if extension == nil then
         local extensions = {
+            wix      = ".msi",
             nsis     = ".exe",
             zip      = ".zip",
             targz    = ".tar.gz",
+            tarxz    = ".tar.xz",
+            dmg      = ".dmg",
+            appimage = ".AppImage",
             srczip   = ".zip",
             srctargz = ".tar.gz",
+            srctarxz = ".tar.xz",
             runself  = ".gz.run",
             deb      = ".deb",
             srpm     = ".src.rpm",
@@ -385,13 +436,15 @@ end
 
 -- get the install files
 function xpack:installfiles()
-    return match_copyfiles(self, "installfiles", self:installdir())
+    return match_copyfiles(self, "installfiles", self:installdir(), {filter = function (value)
+        return filter.handle(value, self)
+    end})
 end
 
 -- get the installed root directory, this is just a temporary sandbox installation path,
 -- we may replace it with the actual installation path in the specfile
 function xpack:install_rootdir()
-    return path.join(self:buildir(), "installed", self:format())
+    return path.join(self:builddir(), "installed", self:format())
 end
 
 -- get the installed directory
@@ -406,12 +459,14 @@ end
 
 -- get the source files
 function xpack:sourcefiles()
-    return match_copyfiles(self, "sourcefiles", self:sourcedir())
+    return match_copyfiles(self, "sourcefiles", self:sourcedir(), {filter = function (value)
+        return filter.handle(value, self)
+    end})
 end
 
 -- get the source root directory
 function xpack:source_rootdir()
-    return path.join(self:buildir(), "source", self:format())
+    return path.join(self:builddir(), "source", self:format())
 end
 
 -- get the source directory
@@ -435,7 +490,7 @@ end
 
 -- get the binary directory
 function xpack:bindir()
-    local bindir = self:get("bindir")
+    local bindir = self:get("bindir") or self:extraconf("prefixdir", self:prefixdir(), "bindir")
     if bindir == nil then
         bindir = "bin"
     end
@@ -444,7 +499,7 @@ end
 
 -- get the library directory
 function xpack:libdir()
-    local libdir = self:get("libdir")
+    local libdir = self:get("libdir") or self:extraconf("prefixdir", self:prefixdir(), "libdir")
     if libdir == nil then
         libdir = "lib"
     end
@@ -453,7 +508,7 @@ end
 
 -- get the include directory
 function xpack:includedir()
-    local includedir = self:get("includedir")
+    local includedir = self:get("includedir") or self:extraconf("prefixdir", self:prefixdir(), "includedir")
     if includedir == nil then
         includedir = "include"
     end
@@ -488,7 +543,14 @@ end
 -- new a xpack, and we need to clone scope info,
 -- because two different format packages maybe have same scope
 function _new(name, info)
-    return xpack {name, info:clone()}
+    local parts = name:split("::", {plain = true})
+    name = parts[#parts]
+    table.remove(parts)
+    local namespace
+    if #parts > 0 then
+        namespace = table.concat(parts, "::")
+    end
+    return xpack {name, info:clone(), namespace}
 end
 
 -- get xpack packages

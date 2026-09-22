@@ -43,12 +43,12 @@ target "xmake"
     fi
 
     # set the auto-generated config.h
-    set_configdir "${buildir}/${plat}/${arch}/${mode}"
+    set_configdir "${builddir}/${plat}/${arch}/${mode}"
     add_configfiles "xmake.config.h.in"
 
     # add includes directory
     add_includedirs ".." "{public}"
-    add_includedirs "${buildir}/${plat}/${arch}/${mode}" "{public}"
+    add_includedirs "${builddir}/${plat}/${arch}/${mode}" "{public}"
     add_includedirs "../xxhash"
     add_includedirs "${projectdir}/xmake/scripts/module"
 
@@ -70,8 +70,17 @@ target "xmake"
     add_files "sandbox/*.c"
     add_files "semver/*.c"
     add_files "string/*.c"
+    add_files "utf8/*.c"
+    add_files "utils/*.c"
     add_files "tty/*.c"
+    add_files "binutils/*.c"
+    add_files "binutils/coff/*.c"
+    add_files "binutils/macho/*.c"
+    add_files "binutils/elf/*.c"
+    add_files "binutils/wasm/*.c"
+    add_files "binutils/ar/*.c"
+    add_files "binutils/mslib/*.c"
+    add_files "thread/*.c"
     if is_plat "mingw"; then
         add_files "winos/*.c"
     fi
-

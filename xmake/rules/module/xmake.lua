@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -23,7 +23,7 @@ rule("module.binary")
         import("core.project.config")
         target:set("kind", "binary")
         target:set("basename", "module_" .. target:name())
-        target:set("targetdir", config.buildir())
+        target:set("targetdir", config.builddir())
     end)
 
 rule("module.shared")
@@ -32,7 +32,7 @@ rule("module.shared")
         import("core.project.config")
         target:set("kind", "shared")
         target:set("basename", "module_" .. target:name())
-        target:set("targetdir", config.buildir())
+        target:set("targetdir", config.builddir())
         target:set("strip", "none")
         target:add("includedirs", path.join(os.programdir(), "scripts", "module"))
         target:add("includedirs", path.join(os.programdir(), "scripts", "module", "luawrap"))

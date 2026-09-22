@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        has_flags.lua
@@ -53,8 +53,10 @@ function main(name, flags, opt)
     opt.flagskey = opt.flagskey or table.concat(flags, " ")
     opt.sysflags = table.wrap(opt.sysflags)
 
+    -- @note avoid running additional `program --version` processes
+    --opt.version = true
+
     -- find tool program and version first
-    opt.version = true
     local tool = find_tool(name, opt)
     if not tool then
         return false
@@ -63,7 +65,7 @@ function main(name, flags, opt)
     -- init tool
     opt.toolname   = tool.name
     opt.program    = tool.program
-    opt.programver = tool.version
+    --opt.programver = tool.version
 
     -- get tool platform
     local plat = opt.plat or config.get("plat") or os.host()
@@ -104,7 +106,7 @@ function main(name, flags, opt)
     -- split flag group, e.g. "-I /xxx" => {"-I", "/xxx"}
     local results = {}
     for _, flag in ipairs(checkflags) do
-        flag = flag:trim()
+        local flag = flag:trim()
         if #flag > 0 then
             if flag:find(" ", 1, true) then
                 table.join2(results, os.argv(flag))
@@ -118,8 +120,8 @@ function main(name, flags, opt)
     -- start profile
     profiler.enter("has_flags", tool.name, checkflags[1])
 
-    -- detect.tools.xxx.has_flags(flags, opt)?
-    local hasflags = import("detect.tools." .. tool.name .. ".has_flags", {try = true})
+    -- core.tools.xxx.has_flags(flags, opt)?
+    local hasflags = import("core.tools." .. tool.name .. ".has_flags", {try = true})
     local errors = nil
     if hasflags then
         result, errors = hasflags(checkflags, opt)
@@ -136,9 +138,7 @@ function main(name, flags, opt)
 
     -- trace
     if option.get("verbose") or option.get("diagnosis") or opt.verbose then
-        cprintf("${dim}checking for flags (")
-        io.write(opt.flagskey)
-        cprint("${dim}) ... %s", result and "${color.success}${text.success}" or "${color.nothing}${text.nothing}")
+        cprint("${dim}checking for flags (%s) ... %s", opt.flagskey, result and "${color.success}${text.success}" or "${color.nothing}${text.nothing}")
         if option.get("diagnosis") then
             cprint("${dim}> %s \"%s\"", path.filename(tool.program), table.concat(checkflags, "\" \""))
             if errors and #tostring(errors) > 0 then
@@ -150,7 +150,6 @@ function main(name, flags, opt)
     -- save result to cache
     cacheinfo[key] = result
     detectcache:set("lib.detect.has_flags", cacheinfo)
-    detectcache:save()
     scheduler.co_unlock(key)
     return result
 end

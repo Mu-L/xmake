@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        vs201x_vcxproj.lua
@@ -29,6 +29,8 @@ import("private.utils.batchcmds")
 import("detect.sdks.find_cuda")
 import("vsfile")
 import("vsutils")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
+import("rules.c++.modules.support", {rootdir = os.programdir()})
 
 function _make_dirs(dir, vcxprojdir)
     dir = dir:trim()
@@ -62,16 +64,9 @@ end
 
 -- get toolset version
 function _get_toolset_ver(targetinfo, vsinfo)
-
     -- get toolset version from vs version
-    local toolset_ver = nil
     local vs_toolset = toolchain.load("msvc"):config("vs_toolset") or config.get("vs_toolset")
-    if vs_toolset then
-        local verinfo = vs_toolset:split('%.')
-        if #verinfo >= 2 then
-            toolset_ver = "v" .. verinfo[1] .. (verinfo[2]:sub(1, 1) or "0")
-        end
-    end
+    local toolset_ver = toolchain_utils.get_vs_toolset_ver(vs_toolset)
     if not toolset_ver then
         toolset_ver = vsinfo.toolset_version
     end
@@ -138,16 +133,11 @@ function _split_gpucodes(flag)
     return flag:split(",")
 end
 
--- is module file?
-function _is_modulefile(sourcefile)
-    local extension = path.extension(sourcefile)
-    return extension == ".mpp" or extension == ".mxx" or extension == ".cppm" or extension == ".ixx"
-end
-
 -- make compiling command
 function _make_compcmd(compargv, sourcefile, objectfile, vcxprojdir)
     local argv = {}
     for i, v in ipairs(compargv) do
+        local v = v
         if i == 1 then
             v = path.filename(v) -- C:\xxx\ml.exe -> ml.exe
         end
@@ -174,6 +164,7 @@ function _make_compflags(sourcefile, targetinfo, vcxprojdir)
     -- translate path for -Idir or /Idir
     local flags = {}
     for _, flag in ipairs(targetinfo.compflags[sourcefile]) do
+        local flag = flag
         for _, pattern in ipairs({"[%-/](I)(.*)", "[%-/](external:I)(.*)"}) do
 
             -- -Idir or /Idir
@@ -197,6 +188,7 @@ function _make_linkflags(targetinfo, vcxprojdir)
     -- replace -libpath:dir or /libpath:dir
     local flags = {}
     for _, flag in ipairs(targetinfo.linkflags) do
+        local flag = flag
 
         -- replace -libpath:dir or /libpath:dir
         flag = flag:gsub(string.ipattern("[%-/]libpath:(.*)"), function (dir)
@@ -500,11 +492,50 @@ function _make_source_options_cl(vcxprojfile, flags, condition)
         vcxprojfile:print("<CompileAs%s>CompileAsCpp</CompileAs>", condition)
     end
 
+
+    -- make SDLCheck flag: /sdl
+    if flagstr:find("[%-/]sdl") then
+        if flagstr:find("[%-/]sdl%-") then
+            vcxprojfile:print("<SDLCheck%s>false</SDLCheck>", condition)
+        else
+            vcxprojfile:print("<SDLCheck%s>true</SDLCheck>", condition)
+        end
+    end
+
+    -- make RemoveUnreferencedCodeData flag: Zc:inline
+    if flagstr:find("[%-/]Zc:inline") then
+        if flagstr:find("[%-/]Zc:inline%-") then
+            vcxprojfile:print("<RemoveUnreferencedCodeData%s>false</RemoveUnreferencedCodeData>", condition)
+        else
+            vcxprojfile:print("<RemoveUnreferencedCodeData%s>true</RemoveUnreferencedCodeData>", condition)
+        end
+    end
+
+    -- make ExceptionHandling flag:
+    if flagstr:find("[%-/]EH[asc]+%-?") then
+        local args = flagstr:match("[%-/]EH([asc]+%-?)")
+        -- remove the last arg if flag endwith `-`
+        if args and args:endswith("-") then
+            args = args:sub(1, -2)
+        end
+        if args and args:find("a", 1, true) then
+            -- a will overwrite s and c
+            vcxprojfile:print("<ExceptionHandling%s>Async</ExceptionHandling>", condition)
+        elseif args == "sc" or args == "cs" then
+            vcxprojfile:print("<ExceptionHandling%s>Sync</ExceptionHandling>", condition)
+        elseif args == "s" then
+            vcxprojfile:print("<ExceptionHandling%s>SyncCThrow</ExceptionHandling>", condition)
+        else
+            -- if args == "c"
+            -- c is ignored without s or a, do nothing here
+        end
+    end
+
     -- make AdditionalOptions
     local excludes = {
         "Od", "Os", "O0", "O1", "O2", "Ot", "Ox", "W0", "W1", "W2", "W3", "W4", "WX", "Wall", "Zi", "ZI", "Z7", "MT", "MTd", "MD", "MDd", "TP",
         "Fd", "fp", "I", "D", "Gm%-", "Gm", "GR%-", "GR", "MP", "external:W0", "external:W1", "external:W2", "external:W3", "external:W4", "external:templates%-?", "external:I",
-        "std:c11", "std:c17", "std:c%+%+11", "std:c%+%+14", "std:c%+%+17", "std:c%+%+20", "std:c%+%+latest", "nologo", "wd(%d+)"
+        "std:c11", "std:c17", "std:c%+%+11", "std:c%+%+14", "std:c%+%+17", "std:c%+%+20", "std:c%+%+latest", "nologo", "wd(%d+)", "sdl%-?", "Zc:inline%-?", "EH[asc]+%-?"
     }
     local additional_flags = _exclude_flags(flags, excludes)
     if #additional_flags > 0 then
@@ -783,6 +814,9 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
         -- save subsystem
         local subsystem = "Console"
 
+        -- save profile
+        local profile = false
+
         -- make linker flags
         local flags = {}
         local excludes = {
@@ -803,6 +837,8 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
             elseif flag_lower:find("[^%-/].+%.lib") then
                 -- link file
                 table.insert(links, flag)
+            elseif flag_lower:find("[%-/]profile") then
+                profile = true
             else
                 local excluded = false
                 for _, exclude in ipairs(excludes) do
@@ -836,6 +872,9 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
 
         -- generate debug infomation?
         if linkerkinds[targetinfo.targetkind] == "Link" then
+
+            -- enable profile?
+            vcxprojfile:print("<Profile>%s</Profile>", tostring(profile))
 
             -- enable debug infomation?
             local debug = false
@@ -896,7 +935,7 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
         local cstandard
         local cxxstandard
         for _, lang in pairs(targetinfo.languages) do
-            lang = lang:replace("c++", "cxx", {plain = true})
+            local lang = lang:replace("c++", "cxx", {plain = true})
             if cxxlangflags[lang] then
                 cxxstandard = cxxlangflags[lang]
             elseif clangflags[lang] then
@@ -1138,7 +1177,7 @@ function _make_source_file_forall(vcxprojfile, vsinfo, target, sourcefile, sourc
         else
 
             -- compile as c++ modules
-            if _is_modulefile(sourcefile) then
+            if support.has_module_extension(sourcefile) then
                 vcxprojfile:print("<CompileAs>CompileAsCppModule</CompileAs>")
             end
 
@@ -1275,7 +1314,7 @@ function _make_source_file_forspec(vcxprojfile, vsinfo, target, sourcefile, sour
         -- for *.c/cpp/cu files
         else
             -- compile as c++ modules
-            if _is_modulefile(sourcefile) then
+            if support.has_module_extension(sourcefile) then
                 vcxprojfile:print("<CompileAs>CompileAsCppModule</CompileAs>")
             end
 
@@ -1399,6 +1438,16 @@ function _make_source_files(vcxprojfile, vsinfo, target)
             end
         end
     vcxprojfile:leave("</ItemGroup>")
+
+    -- add other files (e.g. files added by add_files but handled by a custom rule), for display only
+    local otherfiles = vsutils.otherfiles(target)
+    if #otherfiles > 0 then
+        vcxprojfile:enter("<ItemGroup>")
+            for _, otherfile in ipairs(otherfiles) do
+                vcxprojfile:print("<None Include=\"%s\" />", path.relative(path.absolute(otherfile), target.project_dir))
+            end
+        vcxprojfile:leave("</ItemGroup>")
+    end
 end
 
 -- make vcxproj

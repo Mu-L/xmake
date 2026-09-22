@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        scopeinfo.lua
@@ -359,11 +359,7 @@ end
 
 -- add the api dictionary to the scope info
 function _instance:_api_add_dictionary(name, dict_or_key, value, extra_config)
-
-    -- get the scope info
     local scope = self._INFO
-
-    -- check
     scope[name] = scope[name] or {}
     if type(dict_or_key) == "table" then
         local dict = {}

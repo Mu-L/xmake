@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        build_cache.lua
@@ -67,7 +67,15 @@ function is_enabled(target)
         end
         -- disable ccache on ci
         if result == nil and ci_is_running() then
-            result = false
+            local action_build_cache = _g._ACTION_BUILD_CACHE
+            if action_build_cache == nil then
+                action_build_cache = os.getenv("XMAKE_ACTION_BUILD_CACHE")
+                _g._ACTION_BUILD_CACHE = action_build_cache or false
+            end
+            -- we cannot disable it if github-action-setup-xmake/build-cache is enabled
+            if not action_build_cache then
+                result = false
+            end
         end
         -- disable ccache for msvc, because cl.exe preprocessor is too slower
         -- @see https://github.com/xmake-io/xmake/issues/3532
@@ -79,7 +87,7 @@ function is_enabled(target)
             result = config.get("ccache")
         end
         result = result or false
-        _memcache():set2("enabled", key)
+        _memcache():set2("enabled", key, result)
     end
     return result
 end
@@ -107,7 +115,6 @@ function cachekey(program, cppinfo, envs)
             table.insert(items, cppflag)
         end
     end
-    table.sort(items)
     table.insert(items, hash.xxhash128(cppfile))
     if envs then
         local basename = path.basename(program)
@@ -120,7 +127,7 @@ function cachekey(program, cppinfo, envs)
             end
         end
     end
-    return hash.xxhash128(bytes(table.concat(items, "")))
+    return hash.strhash128(table.concat(items, ""))
 end
 
 -- get cache root directory
@@ -132,9 +139,9 @@ function rootdir()
             cachedir = path.join(global.directory(), ".build_cache")
         end
         if not cachedir then
-            cachedir = path.join(config.buildir(), ".build_cache")
+            cachedir = path.join(config.builddir(), ".build_cache")
         end
-        _g.cachedir = cachedir
+        _g.cachedir = path.absolute(cachedir)
     end
     return cachedir
 end
@@ -332,7 +339,7 @@ function build(program, argv, opt)
                 _g.cache_miss_total_time = (_g.cache_miss_total_time or 0) + (os.mclock() - cache_miss_start_time)
             end
         end
-        os.rm(cppinfo.cppfile)
+        os.tryrm(cppinfo.cppfile)
     else
         _g.preprocess_error_count = (_g.preprocess_error_count or 0) + 1
     end

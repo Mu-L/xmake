@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -43,7 +43,7 @@ rule("plugin.compile_commands.autoupdate")
         end
 
         -- run only once for all xmake process
-        local tmpfile = path.join(config.buildir(), ".gens", "rules", "plugin.compile_commands.autoupdate")
+        local tmpfile = path.join(config.builddir(), ".gens", "rules", "plugin.compile_commands.autoupdate")
         local dependfile = tmpfile .. ".d"
         local lockfile = io.openlock(tmpfile .. ".lock")
         if lockfile:trylock() then

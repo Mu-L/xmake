@@ -1,7 +1,7 @@
 // Foo.cpp
 module Foo;
 
-import :Impl;
+// Impl is implictly imported here
 
 void foo() {
     bar();

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_program.lua
@@ -24,7 +24,7 @@ local sandbox_lib_detect_find_program = sandbox_lib_detect_find_program or {}
 -- load modules
 local os          = require("base/os")
 local path        = require("base/path")
-local option      = require("base/winos")
+local winos       = require("base/winos")
 local table       = require("base/table")
 local utils       = require("base/utils")
 local option      = require("base/option")
@@ -43,6 +43,8 @@ function sandbox_lib_detect_find_program._do_check(program, opt)
     -- do not attempt to run program? check it fastly
     if opt.norun then
         return os.isfile(program)
+    elseif opt.norunfile and path.is_absolute(program) and os.isfile(program) then
+        return true
     end
 
     -- no check script? attempt to run it directly
@@ -62,7 +64,7 @@ function sandbox_lib_detect_find_program._do_check(program, opt)
     elseif type(opt.check) == "table" then
         ok, errors = os.runv(program, opt.check, {envs = opt.envs, shell = opt.shell})
     else
-        ok, errors = sandbox.load(opt.check, program)
+        ok, errors = sandbox.call(opt.check, program)
     end
 
     -- check failed? print verbose error info
@@ -74,15 +76,20 @@ end
 
 -- check program
 function sandbox_lib_detect_find_program._check(program, opt)
+    opt = opt or {}
     local findname = program
     if os.subhost() == "windows" then
-        if not program:endswith(".exe") and not program:endswith(".cmd") and not program:endswith(".bat") then
+        local ext = path.extension(program):lower()
+        if not opt.shell and ext ~= ".exe" and ext ~= ".cmd" and ext ~= ".bat" then
             findname = program .. ".exe"
         end
     elseif os.subhost() == "msys" and os.isfile(program) and os.filesize(program) < 256 then
         -- only a sh script on msys2? e.g. c:/msys64/usr/bin/7z
         -- we need to use sh to wrap it, otherwise os.exec cannot run it
-        program = "sh " .. program
+        local ext = path.extension(program):lower()
+        if ext ~= ".exe" and ext ~= ".cmd" and ext ~= ".bat" then
+            program = "sh " .. program
+        end
         findname = program
     end
     if sandbox_lib_detect_find_program._do_check(findname, opt) then
@@ -101,10 +108,11 @@ function sandbox_lib_detect_find_program._find_from_paths(name, paths, opt)
     -- attempt to check it from the given directories
     if not path.is_absolute(name) then
         for _, _path in ipairs(table.wrap(paths)) do
+            local _path = _path
 
             -- format path for builtin variables
             if type(_path) == "function" then
-                local ok, results = sandbox.load(_path)
+                local ok, results = sandbox.call(_path)
                 if ok then
                     _path = results or ""
                 else
@@ -195,7 +203,11 @@ function sandbox_lib_detect_find_program._find(name, paths, opt)
         if not program_name:endswith(".exe") then
             program_name = program_name .. ".exe"
         end
-        program_path = winos.registry_query("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" .. program_name)
+        if path.is_absolute(program_name) and os.isfile(program_name) then
+            program_path = program_name
+        else
+            program_path = winos.registry_query("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" .. program_name)
+        end
         if program_path then
             program_path = program_path:trim()
             if os.isexec(program_path) then
@@ -206,10 +218,19 @@ function sandbox_lib_detect_find_program._find(name, paths, opt)
             end
         end
     else
-        -- attempt to find it use `which program` command
-        local ok, program_path = os.iorunv("which", {name})
-        if ok and program_path then
-            program_path = program_path:trim()
+        if path.is_absolute(name) and os.isfile(name) then
+            program_path = name
+        else
+            -- attempt to find it use `which program` command
+            local ok, result = os.iorunv("which", {name})
+            if ok and result then
+                program_path = result:trim()
+            else
+                program_path = nil
+            end
+        end
+
+        if program_path then
             local program_path_real = sandbox_lib_detect_find_program._check(program_path, opt)
             if program_path_real then
                 return program_path_real
@@ -235,6 +256,31 @@ function sandbox_lib_detect_find_program._find(name, paths, opt)
         end
     end
 
+    -- attempt to find it use `where.exe program.exe` command
+    -- and we need to add `.exe` suffix to avoid find some incorrect programs. e.g. pkg-config.bat
+    --
+    -- it will return the absolute path, so we call it first
+    -- https://github.com/xmake-io/xmake/discussions/6223#discussioncomment-12537122
+    --
+    if os.host() == "windows" then
+        local program_name = name:lower()
+        if not program_name:endswith(".exe") then
+            program_name = program_name .. ".exe"
+        end
+        local ok, wherepaths = os.iorunv("where.exe", {program_name})
+        if ok and wherepaths then
+            for _, program_path in ipairs(wherepaths:split("\n")) do
+                local program_path = program_path:trim()
+                if #program_path > 0 then
+                    local program_path_real = sandbox_lib_detect_find_program._check(program_path, opt)
+                    if program_path_real then
+                        return program_path_real
+                    end
+                end
+            end
+        end
+    end
+
     -- attempt to find it directly in current environment
     --
     -- @note must be detected at the end, because full path is more accurate
@@ -252,6 +298,7 @@ end
 --                    - opt.paths     the program paths (e.g. dirs, paths, winreg paths, script paths)
 --                    - opt.check     the check script or command
 --                    - opt.norun     do not attempt to run program to check program fastly
+--                    - opt.norunfile do not attempt to run program to check program if it's valid file path.
 --                    - opt.system    true: only find it from system, false: only find it from xmake/packages
 --
 -- @return          the program name or path
@@ -308,7 +355,6 @@ function sandbox_lib_detect_find_program.main(name, opt)
 
     -- cache result
     detectcache:set2(cachekey, name, result and result or false)
-    detectcache:save()
 
     -- trace
     if option.get("verbose") or opt.verbose then

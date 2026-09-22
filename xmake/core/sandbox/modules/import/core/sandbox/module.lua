@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        module.lua
@@ -30,6 +30,7 @@ local table     = require("base/table")
 local string    = require("base/string")
 local option    = require("base/option")
 local global    = require("base/global")
+local addon     = require("package/addon")
 local config    = require("project/config")
 local memcache  = require("cache/memcache")
 local sandbox   = require("sandbox/sandbox")
@@ -168,6 +169,7 @@ function core_sandbox_module._load_from_scriptdir(module_fullpath, opt)
             -- save module
             local scope = module
             for _, modulename in ipairs(path.split(modulepath)) do
+                local modulename = modulename
                 local pos = modulename:find(".lua", 1, true)
                 if pos then
                     modulename = modulename:sub(1, pos - 1)
@@ -203,22 +205,22 @@ function core_sandbox_module._native_moduleinfo(module_fullpath, modulekind)
     local projectdir = path.normalize(path.absolute(module_fullpath))
     local programdir = path.normalize(os.programdir())
     local modulename = path.basename(module_fullpath)
-    local modulehash = hash.uuid4(projectdir):split("-", {plain = true})[1]:lower()
-    local buildir
+    local modulehash = hash.strhash64(projectdir)
+    local builddir
     local is_global = false
     local modulepath
     if projectdir:startswith(programdir) then
         is_global = true
-        buildir = path.join(global.directory(), "cache", "modules", modulehash)
+        builddir = path.join(global.directory(), "cache", "modules", modulehash)
         modulepath = path.join("@programdir", path.relative(projectdir, programdir))
     elseif os.isfile(os.projectfile()) then
-        buildir = path.join(config.directory(), "cache", "modules", modulehash)
+        builddir = path.join(config.directory(), "cache", "modules", modulehash)
         modulepath = path.relative(projectdir, os.projectdir())
     else
-        buildir = path.join(projectdir, "cache", "modules", modulehash)
+        builddir = path.join(projectdir, "cache", "modules", modulehash)
         modulepath = projectdir
     end
-    return {buildir = buildir, projectdir = projectdir, is_global = is_global, modulename = modulename, modulekind = modulekind, modulepath = modulepath}
+    return {builddir = builddir, projectdir = projectdir, is_global = is_global, modulename = modulename, modulekind = modulekind, modulepath = modulepath}
 end
 
 -- build module
@@ -232,10 +234,10 @@ function core_sandbox_module._build_module(moduleinfo)
         return nil, "unknown module kind!"
     end
     utils.cprint("${color.build.target}building native %s module(%s) in %s ...", modulekind_str, moduleinfo.modulename, moduleinfo.modulepath)
-    local buildir = moduleinfo.buildir
+    local builddir = moduleinfo.builddir
     local projectdir = moduleinfo.projectdir
-    local envs = {XMAKE_CONFIGDIR = buildir}
-    local argv = {"config", "-o", buildir, "-a", xmake.arch()}
+    local envs = {XMAKE_CONFIGDIR = builddir}
+    local argv = {"config", "-o", builddir, "-a", xmake.arch()}
     core_sandbox_module._add_builtin_argv(argv, projectdir)
     local ok, errors = os.execv(os.programfile(), argv, {envs = envs, curdir = projectdir})
     if ok ~= 0 then
@@ -254,7 +256,7 @@ end
 function core_sandbox_module._load_from_binary(module_fullpath, opt)
     opt = opt or {}
     local moduleinfo = core_sandbox_module._native_moduleinfo(module_fullpath, MODULE_KIND_BINARY)
-    local binaryfiles = os.files(path.join(moduleinfo.buildir, "module_*"))
+    local binaryfiles = os.files(path.join(moduleinfo.builddir, "module_*"))
     if #binaryfiles == 0 or (not moduleinfo.is_global and opt.always_build) then
         local ok, errors = core_sandbox_module._build_module(moduleinfo)
         if not ok then
@@ -264,7 +266,7 @@ function core_sandbox_module._load_from_binary(module_fullpath, opt)
     end
     local module
     if #binaryfiles == 0 then
-        binaryfiles = os.files(path.join(moduleinfo.buildir, "module_*"))
+        binaryfiles = os.files(path.join(moduleinfo.builddir, "module_*"))
     end
     if #binaryfiles > 0 then
         module = {}
@@ -297,7 +299,7 @@ end
 function core_sandbox_module._load_from_shared(module_fullpath, opt)
     opt = opt or {}
     local moduleinfo = core_sandbox_module._native_moduleinfo(module_fullpath, MODULE_KIND_SHARED)
-    local libraryfiles = os.files(path.join(moduleinfo.buildir, "*module_*"))
+    local libraryfiles = os.files(path.join(moduleinfo.builddir, "*module_*"))
     if #libraryfiles == 0 or (not moduleinfo.is_global and opt.always_build) then
         local ok, errors = core_sandbox_module._build_module(moduleinfo)
         if not ok then
@@ -307,7 +309,7 @@ function core_sandbox_module._load_from_shared(module_fullpath, opt)
     end
     local module
     if #libraryfiles == 0 then
-        libraryfiles = os.files(path.join(moduleinfo.buildir, "*module_*"))
+        libraryfiles = os.files(path.join(moduleinfo.builddir, "*module_*"))
     end
     if #libraryfiles > 0 then
         local script, errors1, errors2
@@ -385,7 +387,7 @@ function core_sandbox_module._find_and_load(name, opt)
                 errors = moduleinfo[2]
             else
                 module, errors = core_sandbox_module._load(moduledir, name, {
-                                                           instance = idx < #modules_directories and opt.instance or nil,  -- last modules need not fork sandbox
+                                                           instance = moduledir ~= core_sandbox_module.coredir() and opt.instance or nil,  -- the core modules need not fork sandbox
                                                            module = module,
                                                            always_build = always_build,
                                                            modulekind = modulekind})
@@ -418,9 +420,10 @@ end
 function core_sandbox_module.directories()
     local moduledirs = memcache.get("core_sandbox_module", "moduledirs")
     if not moduledirs then
+        -- @note the core modules directory must be the last one, @see core_sandbox_module._find_and_load
         moduledirs = { path.join(global.directory(), "modules"),
                        path.join(os.programdir(), "modules"),
-                       path.join(os.programdir(), "core/sandbox/modules/import")}
+                       core_sandbox_module.coredir()}
         local modulesdir = os.getenv("XMAKE_MODULES_DIR")
         if modulesdir and os.isdir(modulesdir) then
             table.insert(moduledirs, 1, modulesdir)
@@ -428,6 +431,14 @@ function core_sandbox_module.directories()
         memcache.set("core_sandbox_module", "moduledirs", moduledirs)
     end
     return moduledirs
+end
+
+-- get the core modules directory
+--
+-- @note the modules in this directory are loaded without sandbox, because they need `require`
+--
+function core_sandbox_module.coredir()
+    return path.join(os.programdir(), "core/sandbox/modules/import")
 end
 
 -- add module directories
@@ -441,6 +452,14 @@ end
 
 -- find module
 function core_sandbox_module.find(name)
+
+    -- an addon can export some modules as the global modules, they are also visible here,
+    -- e.g. find_toolname() looks for `detect.tools.find_xxx` with it, @see addon.globalmodules()
+    local globalmodulesdir = addon.globalmodules()[name]
+    if globalmodulesdir and core_sandbox_module._find(globalmodulesdir, name) then
+        return true
+    end
+
     for _, moduledir in ipairs(core_sandbox_module.directories()) do
         if (core_sandbox_module._find(moduledir, name)) then
             return true
@@ -497,6 +516,24 @@ function core_sandbox_module.import(name, opt)
     local scope_parent = getfenv(2)
     assert(scope_parent)
 
+    -- import the modules of the installed addons? e.g. import("@addon.foo")
+    --
+    -- @note we need the `@addon.` prefix to distinguish them from the builtin modules
+    --
+    -- import the modules of an addon?
+    -- e.g. import("@addon.esp32.sdkconfig"), import("@self.sdkconfig")
+    local addon_modulesdir
+    local addon_reference = name
+    if addon.is_reference(name, ".") then
+        local referenceinfo, errors = addon.resolve_reference(name, ".", "modules",
+            {scriptdir = opt.scriptdir or sandbox.instance() and sandbox.instance():rootdir()})
+        if not referenceinfo then
+            raise(errors)
+        end
+        addon_modulesdir = referenceinfo.dir
+        name = referenceinfo.name
+    end
+
     -- get module name
     local modulename = core_sandbox_module.name(name)
     if not modulename then
@@ -514,7 +551,25 @@ function core_sandbox_module.import(name, opt)
     local rootdir = opt.rootdir or instance:rootdir()
 
     -- init module directories (disable local packages?)
-    local modules_directories = (opt.nolocal or not rootdir) and core_sandbox_module.directories() or table.join(rootdir, core_sandbox_module.directories())
+    local modules_directories
+    if addon_modulesdir then
+        -- the addon modules are always resolved from the addon `modules` directory only,
+        -- e.g. import("@addon.esp32.sdkconfig"), import("@self.sdkconfig")
+        modules_directories = {addon_modulesdir}
+    else
+        modules_directories = (opt.nolocal or not rootdir) and core_sandbox_module.directories() or table.join(rootdir, core_sandbox_module.directories())
+
+        -- an addon can export some modules as the global modules, e.g. add_globalmodules("core.tools.esptool"),
+        -- so that the internal calls can import them with their plain names, e.g. import("core.tools.esptool")
+        --
+        -- @note we only accept the declared names, the other modules of this addon are
+        -- still private and can only be imported with `@addon.`/`@self.`
+        --
+        local globalmodulesdir = addon.globalmodules()[name]
+        if globalmodulesdir then
+            table.insert(modules_directories, rootdir and 2 or 1, globalmodulesdir)
+        end
+    end
 
     -- load module
     local loadopt = table.clone(opt) or {}
@@ -553,6 +608,8 @@ function core_sandbox_module.import(name, opt)
     if not found then
         if opt.try then
             return nil
+        elseif addon_modulesdir then
+            raise("cannot import module: %s, not found!", addon_reference)
         else
             raise("cannot import module: %s, not found!", name)
         end
@@ -619,14 +676,8 @@ end
 -- @note the polymiorphism is not supported for import.inherit mode now.
 --
 function core_sandbox_module.inherit(name, opt)
-
-    -- init opt
     opt = opt or {}
-
-    -- mark as inherit
     opt.inherit = true
-
-    -- import and inherit it
     return core_sandbox_module.import(name, opt)
 end
 

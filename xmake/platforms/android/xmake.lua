@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -29,7 +29,7 @@ platform("android")
     -- @see https://developer.android.google.cn/ndk/guides/abis
     -- @note The NDK previously supported ARMv5 (armeabi) and 32-bit and 64-bit MIPS, but this support has been removed in NDK r17.
     --
-    set_archs("armeabi", "armeabi-v7a", "arm64-v8a", "x86", "x86_64", "mips", "mip64")
+    set_archs("armeabi", "armeabi-v7a", "arm64-v8a", "riscv64", "x86", "x86_64", "mips", "mip64")
 
     set_formats("static", "lib$(name).a")
     set_formats("object", "$(name).o")

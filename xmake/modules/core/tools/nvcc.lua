@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        nvcc.lua
@@ -27,6 +27,21 @@ import("core.platform.platform")
 import("core.language.language")
 import("core.project.policy")
 import("utils.progress")
+
+-- get implib file
+function _get_implibfile(self, targetkind, targetfile, opt)
+    if targetkind == "shared" and self:is_plat("mingw") then
+        local target = opt and opt.target
+        local implibfile
+        if target and target:type() == "target" then
+            implibfile = target:artifactfile("implib")
+        end
+        if not implibfile then
+            implibfile = path.join(path.directory(targetfile), path.basename(targetfile) .. ".a")
+        end
+        return implibfile
+    end
+end
 
 -- init it
 function init(self)
@@ -52,7 +67,9 @@ function nf_symbol(self, level, opt)
     -- debug? generate *.pdb file
     local flags = nil
     if level == "debug" then
-        flags = {"-G", "-g", "-lineinfo"}
+        -- #5777: '--device-debug (-G)' overrides '--generate-line-info (-lineinfo)' in nvcc
+        -- remove '-G' and '-lineinfo' and add them in mode.debug and mode.profile respectively
+        flags = {"-g"}
         if self:is_plat("windows") then
             local host_flags = nil
             local symbolfile = nil
@@ -210,6 +227,58 @@ function nf_language(self, stdname)
     return result
 end
 
+-- make the encoding flag
+--
+-- e.g.
+-- set_encodings("utf-8")
+-- set_encodings("source:utf-8", "target:utf-8")
+function nf_encoding(self, encoding)
+    local kind
+    local charset
+    local splitinfo = encoding:split(":")
+    if #splitinfo > 1 then
+        kind = splitinfo[1]
+        charset = splitinfo[2]
+    else
+        charset = encoding
+    end
+    local charsets = {
+        ["utf-8"] = "utf-8",
+        utf8 = "utf-8",
+    }
+    local flags = {}
+    charset = charsets[charset:lower()]
+    if charset then
+        if self:is_plat("windows") then
+            if not kind and charset == "utf-8" then
+                table.insert(flags, "-Xcompiler")
+                table.insert(flags, "/utf-8")
+            else
+                if kind == "source" or not kind then
+                    table.insert(flags, "-Xcompiler")
+                    table.insert(flags, "-source-charset:" .. charset)
+                end
+                if kind == "target" or not kind then
+                    table.insert(flags, "-Xcompiler")
+                    table.insert(flags, "-execution-charset:" .. charset)
+                end
+            end
+        else
+            if kind == "source" or not kind then
+                table.insert(flags, "-Xcompiler")
+                table.insert(flags, "-finput-charset=" .. charset:upper())
+            end
+            if kind == "target" or not kind then
+                table.insert(flags, "-Xcompiler")
+                table.insert(flags, "-fexec-charset=" .. charset:upper())
+            end
+        end
+    end
+    if #flags > 0 then
+        return flags
+    end
+end
+
 -- make the define flag
 function nf_define(self, macro)
     return {"-D" .. macro}
@@ -272,7 +341,8 @@ function nf_pcxxheader(self, pcheaderfile)
 end
 
 -- make the link arguments list
-function linkargv(self, objectfiles, targetkind, targetfile, flags)
+function linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
 
     -- add rpath for dylib (macho), e.g. -install_name @rpath/file.dylib
     local flags_extra = {}
@@ -284,9 +354,10 @@ function linkargv(self, objectfiles, targetkind, targetfile, flags)
     end
 
     -- add `-Wl,--out-implib,outputdir/libxxx.a` for xxx.dll on mingw/gcc
-    if targetkind == "shared" and self:is_plat("mingw") then
+    local implibfile = _get_implibfile(self, targetkind, targetfile, opt)
+    if implibfile then
         table.insert(flags_extra, "-Xlinker")
-        table.insert(flags_extra, "-Wl,--out-implib," .. path.join(path.directory(targetfile), path.basename(targetfile) .. ".dll.a"))
+        table.insert(flags_extra, "-Wl,--out-implib," .. implibfile)
     end
 
     -- make link args
@@ -294,10 +365,34 @@ function linkargv(self, objectfiles, targetkind, targetfile, flags)
 end
 
 -- link the target file
-function link(self, objectfiles, targetkind, targetfile, flags)
+function link(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
+
     os.mkdir(path.directory(targetfile))
-    local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags)
+    local implibfile = _get_implibfile(self, targetkind, targetfile, opt)
+    if implibfile then
+        os.mkdir(path.directory(implibfile))
+    end
+
+    local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
     os.runv(program, argv, {envs = self:runenvs()})
+end
+
+-- show warnings
+function _show_warnings(self, output)
+    local lines = output:split('\n', {plain = true})
+    -- filter nvcc output, e.g.  xxx.cu, tmpxft_xxx.cudafe1.cpp
+    table.remove_if(lines, function (_, line)
+        return line:match("^tmpxft_") or line:match("%.cu$")
+    end)
+
+    if #lines > 0 then
+        if not option.get("diagnosis") then
+            lines = table.slice(lines, 1, (#lines > 16 and 16 or #lines))
+        end
+        local warnings = table.concat(lines, "\n")
+        progress.show_output("${color.warning}%s", warnings)
+    end
 end
 
 -- support `-MD -MF depfile.d`?
@@ -420,21 +515,21 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
         },
         finally
         {
-            function (ok, warnings)
-
-                -- print some warnings
-                if warnings and #warnings > 0 and policy.build_warnings(opt) then
-                    if progress.showing_without_scroll() then
-                        print("")
+            function (ok, outdata, errdata)
+                -- show warnings?
+                if ok and policy.build_warnings(opt) then
+                    local output = (outdata or "") .. (errdata or "")
+                    if #output > 0 then
+                        _show_warnings(self, output)
                     end
-                    cprint("${color.warning}%s", table.concat(table.slice(warnings:split('\n', {plain = true}), 1, 8), '\n'))
                 end
 
                 -- generate the dependent includes
                 if depfile and os.isfile(depfile) then
                     if dependinfo then
                         -- nvcc uses gcc-style depfiles
-                        dependinfo.depfiles_gcc = io.readfile(depfile, {continuation = "\\"})
+                        dependinfo.depfiles_format = "gcc"
+                        dependinfo.depfiles = io.readfile(depfile, {continuation = "\\"})
                     end
 
                     -- remove the temporary dependent file

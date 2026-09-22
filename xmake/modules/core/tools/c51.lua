@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      DawnMagnet
 -- @file        c51.lua
@@ -119,10 +119,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
                                 lines = table.slice(lines, 1, (#lines > 16 and 16 or #lines))
                             end
                             local warnings = table.concat(lines, "\n")
-                            if progress.showing_without_scroll() then
-                                print("")
-                            end
-                            cprint("${color.warning}%s", warnings)
+                            progress.show_output("${color.warning}%s", warnings)
                         end
                     end
                 end

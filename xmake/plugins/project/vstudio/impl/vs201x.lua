@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        vs201x.lua
@@ -39,8 +39,8 @@ import("private.action.require.install", {alias = "install_requires"})
 import("private.action.run.runenvs")
 import("actions.config.configfiles", {alias = "generate_configfiles", rootdir = os.programdir()})
 import("private.utils.batchcmds")
-import("private.utils.rule_groups")
 import("plugins.project.utils.target_cmds", {rootdir = os.programdir()})
+import("private.utils.target", {alias = "target_utils"})
 
 function _translate_path(dir, vcxprojdir)
     if dir == nil then
@@ -93,6 +93,7 @@ function _get_command_string(cmd, vcxprojdir)
     if cmd.program then
         local argv = {}
         for _, v in ipairs(table.join(cmd.program, cmd.argv)) do
+            local v = v
             if path.instance_of(v) then
                 v = v:clone():set(_translate_path(v:rawstr(), vcxprojdir)):str()
             elseif path.is_absolute(v) then
@@ -118,8 +119,9 @@ function _get_command_string(cmd, vcxprojdir)
     elseif kind == "mkdir" then
         local dir = _translate_path(cmd.dir, vcxprojdir)
         return string.format("if not exist \"%s\" mkdir \"%s\"", dir, dir)
-    elseif kind == "show" then
-        return string.format("echo %s", colors.ignore(cmd.showtext))
+    elseif kind == "show" or kind == "show_progress" then
+        local text = string.format(cmd.format, table.unpack(cmd.argv))
+        return string.format("echo %s", colors.ignore(text))
     end
 end
 
@@ -132,24 +134,16 @@ function _make_custom_commands(target, vcxprojdir)
         return _translate_path(p, vcxprojdir)
     end)
 
-    -- build sourcebatch groups first
-    local sourcegroups = rule_groups.build_sourcebatch_groups(target, target:sourcebatches())
-
     -- ignore c++ modules rules
     local ignored_rules = _get_cxxmodules_rules()
 
     -- add before commands
     -- we use irpairs(groups), because the last group that should be given the highest priority.
-    local cmds_before = {}
-    target_cmds.get_target_buildcmd(target, cmds_before, {suffix = "before", ignored_rules = ignored_rules})
-    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {suffix = "before", ignored_rules = ignored_rules})
-    -- rule.on_buildcmd_files should also be executed before building the target, as cmake PRE_BUILD does not work.
-    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {ignored_rules = ignored_rules})
+    -- rule.on_buildcmd_files should also be executed before building the target
+    local cmds_before = target_cmds.get_target_buildcmds(target, {ignored_rules = ignored_rules, stages = {"before", "on"}})
 
     -- add after commands
-    local cmds_after = {}
-    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_after, sourcegroups, {suffix = "after", ignored_rules = ignored_rules})
-    target_cmds.get_target_buildcmd(target, cmds_after, {suffix = "after", ignored_rules = ignored_rules})
+    local cmds_after = target_cmds.get_target_buildcmds(target, {ignored_rules = ignored_rules, stages = {"after"}})
 
     local commands = {}
     for _, cmd in ipairs(cmds_before) do
@@ -283,6 +277,7 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
         end
     end
     for k, v in table.orderpairs(setrunenvs) do
+        local v = v
         if #v == 1 then
             v = v[1]
             if path.is_absolute(v) and v:startswith(project.directory()) then
@@ -386,17 +381,14 @@ end
 
 -- make vstudio project
 function make(outputdir, vsinfo)
-
-    -- enter project directory
     local oldir = os.cd(project.directory())
 
-    -- init solution directory
+    -- prepare targets
+    target_cmds.prepare_targets()
+
+    -- init vsinfo
     vsinfo.solution_dir = path.join(outputdir, "vs" .. vsinfo.vstudio_version)
-
-    -- init modes
     vsinfo.modes = _make_vsinfo_modes()
-
-    -- init archs
     vsinfo.archs = _make_vsinfo_archs()
 
     -- load targets
@@ -410,23 +402,8 @@ function make(outputdir, vsinfo)
             -- reload config, project and platform
             if mode ~= config.mode() or arch ~= config.arch() then
 
-                -- modify config
-                config.set("as", nil, {force = true}) -- force to re-check as for ml/ml64
-                config.set("mode", mode, {readonly = true, force = true})
-                config.set("arch", arch, {readonly = true, force = true})
-
-                -- clear all options
-                for _, opt in ipairs(project.options()) do
-                    opt:clear()
-                end
-
-                -- clear cache
-                memcache.clear()
-                localcache.clear("detect")
-                localcache.clear("option")
-                localcache.clear("package")
-                localcache.clear("toolchain")
-                localcache.clear("cxxmodules")
+                -- reset project configs and caches
+                vsutils.reset_config_and_caches(mode, arch)
 
                 -- check platform
                 platform.load(config.plat(), arch):check()
@@ -436,6 +413,9 @@ function make(outputdir, vsinfo)
 
                 -- install and update requires
                 install_requires()
+
+                -- check target toolchains
+                target_utils.check_target_toolchains()
 
                 -- load targets
                 project.load_targets()
@@ -448,7 +428,8 @@ function make(outputdir, vsinfo)
             os.cd(project.directory())
 
             -- save targets
-            for targetname, target in table.orderpairs(project.targets()) do
+            local project_targets = target_utils.get_project_targets()
+            for targetname, target in table.orderpairs(project_targets) do
 
                 -- make target with the given mode and arch
                 targets[targetname] = targets[targetname] or {}
@@ -519,7 +500,5 @@ function make(outputdir, vsinfo)
 
     -- clear local cache
     _clear_cache()
-
-    -- leave project directory
     os.cd(oldir)
 end

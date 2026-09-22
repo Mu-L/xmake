@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -28,7 +28,7 @@ toolchain("cosmocc")
     set_formats("symbol", "$(name).sym")
 
     set_toolset("cc",     "cosmocc")
-    set_toolset("cxx",    "cosmocc", "cosmoc++")
+    set_toolset("cxx",    "cosmoc++", "cosmocc")
     set_toolset("cpp",    "cosmocc -E")
     set_toolset("as",     "cosmocc")
     set_toolset("ld",     "cosmoc++", "cosmocc")
@@ -45,4 +45,12 @@ toolchain("cosmocc")
             toolchain:set("toolset", "ranlib", "aarch64-linux-cosmo-ranlib")
             toolchain:set("toolset", "strip", "aarch64-linux-cosmo-strip")
         end
+        -- @see https://github.com/xmake-io/xmake/issues/5552
+        local envs = toolchain:config("envs")
+        if envs then
+            for k, v in pairs(envs) do
+                toolchain:add("runenvs", k, v)
+            end
+        end
     end)
+

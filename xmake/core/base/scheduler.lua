@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        scheduler.lua
@@ -21,6 +21,7 @@
 -- define module: scheduler
 local scheduler  = scheduler or {}
 local _coroutine = _coroutine or {}
+local _semaphore = _semaphore or {}
 
 -- load modules
 local table     = require("base/table")
@@ -30,8 +31,118 @@ local string    = require("base/string")
 local poller    = require("base/poller")
 local timer     = require("base/timer")
 local hashset   = require("base/hashset")
+local queue     = require("base/queue")
 local coroutine = require("base/coroutine")
 local bit       = require("base/bit")
+
+-- new a semaphore instance
+function _semaphore.new(name, value)
+    local instance    = table.inherit(_semaphore)
+    instance._NAME    = name
+    instance._VALUE   = value or 0
+    instance._WAITING = queue.new()
+    instance._POSTING = false
+    setmetatable(instance, _semaphore)
+    return instance
+end
+
+-- get the semaphore name
+function _semaphore:name()
+    return self._NAME or "none"
+end
+
+-- post the semaphore value
+function _semaphore:post(value)
+    if self._POSTING then
+        return self._VALUE
+    end
+    self._POSTING = true
+    local new_value = self._VALUE + value
+    self._VALUE = new_value
+    if new_value > 0 then
+        local waiting = self._WAITING
+        local post_count = 0
+        while not waiting:empty() do
+            local co = waiting:pop()
+            if not co:is_suspended() then
+                self._POSTING = false
+                return -1, string.format("%s cannot be resumed, status: %s", co, co:status())
+            end
+            local ok, errors = scheduler:co_resume(co)
+            if not ok then
+                self._POSTING = false
+                return -1, errors
+            end
+            post_count = post_count + 1
+            if post_count >= new_value then
+                break
+            end
+        end
+    end
+    self._POSTING = false
+    return new_value
+end
+
+-- wait the semaphore
+function _semaphore:wait(timeout)
+
+    -- get the running coroutine
+    local running = scheduler:co_running()
+    if not running then
+        return -1, "we must call semaphore:wait() in coroutine with scheduler!"
+    end
+
+    -- is stopped?
+    if not scheduler._STARTED then
+        return -1, "the scheduler is stopped!"
+    end
+
+    -- update value
+    local value = self._VALUE
+    if value > 0 then
+        self._VALUE = value - 1
+        return value
+    end
+
+    -- no signal? return immediately if timeout is zero
+    if timeout == 0 then
+        return 0
+    end
+
+    -- wait semaphore
+    self._WAITING:push(running)
+    if timeout > 0 then
+        scheduler:_timer():post(function (cancel)
+            if running:is_suspended() then
+                return scheduler:co_resume(running, true)
+            end
+            return true
+        end, timeout)
+    end
+
+    while true do
+        local timeout = scheduler:co_suspend()
+
+        local value = self._VALUE
+        if value > 0 then
+            self._VALUE = value - 1
+            return value
+        end
+
+        if timeout then
+            break
+        end
+
+        -- continue to wait it
+        self._WAITING:push(running)
+    end
+    return 0
+end
+
+-- tostring(semaphore)
+function _semaphore:__tostring()
+    return string.format("<co_semaphore: %s/%d>", self:name(), self._VALUE)
+end
 
 -- new a coroutine instance
 function _coroutine.new(name, thread)
@@ -193,9 +304,17 @@ end
 function scheduler:_poller_events_cb(obj, events)
 
     -- get poller object data
+    --
+    -- the object may have been cancelled while its event was already queued,
+    -- e.g. a process which exits right after we stopped waiting for it,
+    -- @see scheduler:poller_cancel()
+    --
+    -- such an event has no owner any more, we just drop it: it is not an
+    -- error of the scheduler and it must not abort the whole loop
     local pollerdata = self:_poller_data(obj)
     if not pollerdata then
-        return false, string.format("%s: cannot get poller data!", obj)
+        utils.dprint("%s: drop the event(%d), it has been cancelled!", obj, events)
+        return true
     end
 
     -- is process/fwatcher object?
@@ -273,18 +392,15 @@ function scheduler:_co_curdir_update(curdir)
         return
     end
 
-    -- save the current directory hash
+    -- save the current directory
     curdir = curdir or os.curdir()
-    local curdir_hash = hash.uuid4(path.absolute(curdir)):sub(1, 8)
-    self._CO_CURDIR_HASH = curdir_hash
-
-    -- save the current directory for each coroutine
     local co_curdirs = self._CO_CURDIRS
     if not co_curdirs then
         co_curdirs = {}
         self._CO_CURDIRS = co_curdirs
     end
-    co_curdirs[running] = {curdir_hash, curdir}
+    co_curdirs[running] = curdir
+    self._CO_CURDIR_CURRENT = curdir
 end
 
 -- update the current environments hash of current coroutine
@@ -302,7 +418,7 @@ function scheduler:_co_curenvs_update(envs)
     for _, key in ipairs(table.orderkeys(envs)) do
         envs_hash = envs_hash .. key:upper() .. envs[key]
     end
-    envs_hash = hash.uuid4(envs_hash):sub(1, 8)
+    envs_hash = hash.strhash64(envs_hash)
     self._CO_CURENVS_HASH = envs_hash
 
     -- save the current directory for each coroutine
@@ -375,16 +491,33 @@ function scheduler:_profiler()
 end
 
 -- start a new coroutine task
+--
+-- @param cotask the coroutine task function
+-- @param ...    the task arguments
+-- @return       the coroutine object
+--
 function scheduler:co_start(cotask, ...)
     return self:co_start_named(nil, cotask, ...)
 end
 
 -- start a new named coroutine task
+--
+-- @param coname the coroutine name for debugging
+-- @param cotask the coroutine task function
+-- @param ...    the task arguments
+-- @return       the coroutine object
+--
 function scheduler:co_start_named(coname, cotask, ...)
     return self:co_start_withopt({name = coname}, cotask, ...)
 end
 
 -- start a new coroutine task with options
+--
+-- @param opt    the options, e.g. {name = "xxx", isolate = true}
+-- @param cotask the coroutine task function
+-- @param ...    the task arguments
+-- @return       the coroutine object
+--
 function scheduler:co_start_withopt(opt, cotask, ...)
 
     -- check coroutine task
@@ -435,6 +568,11 @@ function scheduler:co_start_withopt(opt, cotask, ...)
 end
 
 -- resume the given coroutine
+--
+-- @param co     the coroutine object
+-- @param ...    the resume arguments
+-- @return       true on success, and the yield results
+--
 function scheduler:co_resume(co, ...)
 
     -- do resume
@@ -444,10 +582,10 @@ function scheduler:co_resume(co, ...)
     if running then
 
         -- has the current directory been changed? restore it
-        local curdir = self._CO_CURDIR_HASH
+        local curdir = self._CO_CURDIR_CURRENT
         local olddir = self._CO_CURDIRS and self._CO_CURDIRS[running] or nil
-        if olddir and curdir ~= olddir[1] then -- hash changed?
-            os.cd(olddir[2])
+        if olddir and curdir ~= olddir then -- hash changed?
+            os.cd(olddir)
         end
 
         -- has the current environments been changed? restore it
@@ -462,6 +600,10 @@ function scheduler:co_resume(co, ...)
 end
 
 -- suspend the current coroutine
+--
+-- @param ...    the suspend results to return to resume caller
+-- @return       the resume arguments
+--
 function scheduler:co_suspend(...)
 
     -- suspend it
@@ -469,10 +611,10 @@ function scheduler:co_suspend(...)
 
     -- has the current directory been changed? restore it
     local running = assert(self:co_running())
-    local curdir = self._CO_CURDIR_HASH
+    local curdir = self._CO_CURDIR_CURRENT
     local olddir = self._CO_CURDIRS and self._CO_CURDIRS[running] or nil
-    if olddir and curdir ~= olddir[1] then -- hash changed?
-        os.cd(olddir[2])
+    if olddir and curdir ~= olddir then -- hash changed?
+        os.cd(olddir)
     end
 
     -- has the current environments been changed? restore it
@@ -486,12 +628,15 @@ function scheduler:co_suspend(...)
     return table.unpack(results)
 end
 
--- yield the current coroutine
+-- yield the current coroutine (give up execution temporarily)
 function scheduler:co_yield()
     return scheduler.co_sleep(self, 1)
 end
 
--- sleep some times (ms)
+-- sleep the current coroutine for given milliseconds
+--
+-- @param ms     the sleep time in milliseconds
+--
 function scheduler:co_sleep(ms)
 
     -- we don't need to sleep
@@ -523,7 +668,10 @@ function scheduler:co_sleep(ms)
     return true
 end
 
--- lock the current coroutine
+-- lock the current coroutine (cooperative lock by name)
+--
+-- @param lockname   the lock name
+--
 function scheduler:co_lock(lockname)
 
     -- get the running coroutine
@@ -574,6 +722,9 @@ function scheduler:co_lock(lockname)
 end
 
 -- unlock the current coroutine
+--
+-- @param lockname   the lock name
+--
 function scheduler:co_unlock(lockname)
 
     -- get the running coroutine
@@ -605,6 +756,10 @@ function scheduler:co_unlock(lockname)
 end
 
 -- get the given coroutine group
+--
+-- @param name   the group name
+-- @return       the coroutines table in this group
+--
 function scheduler:co_group(name)
     return self._CO_GROUPS and self._CO_GROUPS[name]
 end
@@ -634,7 +789,12 @@ function scheduler:co_group_begin(name, scopefunc)
     return true
 end
 
--- wait for finishing the given coroutine group
+-- wait for finishing all coroutines in the given group
+--
+-- @param name   the group name
+-- @param opt    the options, e.g. {limit = 8}
+-- @return       true on success, or errors
+--
 function scheduler:co_group_wait(name, opt)
 
     -- get coroutine group
@@ -707,6 +867,9 @@ function scheduler:co_group_waitobjs(name)
 end
 
 -- get the current running coroutine
+--
+-- @return       the current coroutine object
+--
 function scheduler:co_running()
     if self._ENABLED then
         local running = coroutine.running()
@@ -715,6 +878,9 @@ function scheduler:co_running()
 end
 
 -- get all coroutine tasks
+--
+-- @return       the tasks table
+--
 function scheduler:co_tasks()
     local cotasks = self._CO_TASKS
     if not cotasks then
@@ -727,6 +893,11 @@ end
 -- get all coroutine count
 function scheduler:co_count()
     return self._CO_COUNT or 0
+end
+
+-- new a coroutine semaphore
+function scheduler:co_semaphore(name, value)
+    return _semaphore.new(name, value)
 end
 
 -- wait poller object io events, only for socket and pipe object
@@ -905,6 +1076,10 @@ function scheduler:poller_waitproc(obj, timeout)
     running:waitobj_set(obj)
 
     -- wait
+    --
+    -- @note we keep this process in the poller if it is timeout, so its exit status
+    -- is still saved as a pending status when it exits later, and the next wait
+    -- returns it immediately, @see scheduler:_poller_events_cb()
     local ok = self:co_suspend()
     return ok, pollerdata.object_event
 end
