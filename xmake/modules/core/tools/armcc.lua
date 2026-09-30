@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        armcc.lua
@@ -177,16 +177,14 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
                 -- print some warnings
                 if warnings and #warnings > 0 and policy.build_warnings(opt) then
-                    if progress.showing_without_scroll() then
-                        print("")
-                    end
-                    cprint("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
+                    progress.show_output("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
                 end
 
                 -- generate the dependent includes
                 if depfile and os.isfile(depfile) then
                     if dependinfo then
-                        dependinfo.depfiles_armcc = io.readfile(depfile, {continuation = "\\"})
+                        dependinfo.depfiles_format = "armcc"
+                        dependinfo.depfiles = io.readfile(depfile, {continuation = "\\"})
                     end
 
                     -- remove the temporary dependent file

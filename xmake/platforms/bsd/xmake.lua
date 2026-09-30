@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,7 +21,7 @@
 platform("bsd")
     set_os("bsd")
     set_hosts("bsd")
-    set_archs("i386", "x86_64")
+    set_archs("i386", "x86_64", "arm", "arm64", "ppc", "ppc64", "ppc64el", "riscv64", "sparc64")
 
     set_formats("static", "lib$(name).a")
     set_formats("object", "$(name).o")
@@ -30,15 +30,17 @@ platform("bsd")
 
     set_installdir("/usr/local")
 
-    set_toolchains("envs", "gcc", "clang", "yasm", "nasm", "fasm", "cuda", "go", "rust", "gfortran", "zig")
+    set_toolchains("envs", "gcc", "clang", "yasm", "nasm", "fasm", "cuda", "go", "rust", "gfortran", "zig", "dotnet")
 
     set_menu {
                 config =
                 {
                     {category = "Cuda SDK Configuration"                                            }
                 ,   {nil, "cuda",           "kv", "auto",       "The Cuda SDK Directory"            }
+                ,   {nil, "cuda_sdkver",    "kv", "auto",       "The Cuda SDK Version"              }
                 ,   {category = "Qt SDK Configuration"                                              }
                 ,   {nil, "qt",             "kv", "auto",       "The Qt SDK Directory"              }
+                ,   {nil, "qt_host",        "kv", "auto",       "The Qt Host SDK Directory"         }
                 ,   {nil, "qt_sdkver",      "kv", "auto",       "The Qt SDK Version"                }
                 }
 
@@ -48,7 +50,6 @@ platform("bsd")
                 ,   {nil, "cuda",           "kv", "auto",       "The Cuda SDK Directory"            }
                 ,   {category = "Qt SDK Configuration"                                              }
                 ,   {nil, "qt",             "kv", "auto",       "The Qt SDK Directory"              }
+                ,   {nil, "qt_host",        "kv", "auto",       "The Qt Host SDK Directory"         }
                 }
             }
-
-

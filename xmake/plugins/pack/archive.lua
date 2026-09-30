@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        archive.lua
@@ -55,6 +55,7 @@ function _pack_archive(package)
     local oldir = os.cd(rootdir)
     local archivefiles = os.files("**")
     os.cd(oldir)
+    os.tryrm(package:outputfile())
     archive.archive(path.absolute(package:outputfile()), archivefiles, {curdir = rootdir, compress = "best"})
 end
 

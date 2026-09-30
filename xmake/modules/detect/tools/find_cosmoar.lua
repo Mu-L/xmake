@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_cosmoar.lua
@@ -36,6 +36,7 @@ import("lib.detect.find_program")
 function main(opt)
     opt = opt or {}
     opt.shell = true
+    opt.envs  = opt.envs or {PATH = os.getenv("PATH")}
     local program = find_program(opt.program or "cosmoar", opt)
     if program and is_host("windows") then
         program = program:gsub("\\", "/")

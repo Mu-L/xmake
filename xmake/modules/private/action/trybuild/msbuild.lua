@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        msbuild.lua
@@ -27,7 +27,7 @@ import("lib.detect.find_tool")
 
 -- find project file
 function _find_projectfile()
-    return find_file("*.sln", os.curdir())
+    return find_file("*.sln", os.curdir()) or find_file("*.slnx", os.curdir())
 end
 
 -- detect build-system and configuration file
@@ -42,7 +42,11 @@ function clean()
     local projectfile = _find_projectfile()
     local runenvs = toolchain.load("msvc"):runenvs()
     local msbuild = find_tool("msbuild", {envs = runenvs})
-    os.vexecv(msbuild.program, {projectfile, "-nologo", "-t:Clean", "-p:Configuration=Release", "-p:Platform=" .. (is_arch("x64") and "x64" or "Win32")}, {envs = runenvs})
+    local projectdata = io.readfile(projectfile)
+    if projectdata and projectdata:find("Any CPU", 1, true) then
+        platform = "Any CPU"
+    end
+    os.vexecv(msbuild.program, {projectfile, "-nologo", "-t:Clean", "-p:Configuration=Release", "-p:Platform=" .. platform}, {envs = runenvs})
 end
 
 -- do build
@@ -55,6 +59,11 @@ function build()
     local projectfile = _find_projectfile()
     local runenvs = toolchain.load("msvc"):runenvs()
     local msbuild = find_tool("msbuild", {envs = runenvs})
-    os.vexecv(msbuild.program, {projectfile, "-nologo", "-t:Build", "-p:Configuration=Release", "-p:Platform=" .. (is_arch("x64") and "x64" or "Win32")}, {envs = runenvs})
+    local platform = is_arch("x64") and "x64" or "Win32"
+    local projectdata = io.readfile(projectfile)
+    if projectdata and projectdata:find("Any CPU", 1, true) then
+        platform = "Any CPU"
+    end
+    os.vexecv(msbuild.program, {projectfile, "-nologo", "-t:Build", "-p:Configuration=Release", "-p:Platform=" .. platform}, {envs = runenvs})
     cprint("${color.success}build ok!")
 end

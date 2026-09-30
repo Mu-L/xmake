@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        features.lua
@@ -34,6 +34,12 @@ import("core.base.scheduler")
 -- local features = features("clang", {flags = "-O0", program = "xcrun -sdk macosx clang"})
 -- local features = features("clang", {flags = {"-g", "-O0"}, envs = {PATH = ""}})
 -- @endcode
+--
+-- get all supported features of the given tool
+--
+-- @param name  the tool name, e.g. "clang", "gcc"
+-- @param opt   the options, e.g. {program = "", flags = {}}
+-- @return      the features table, e.g. {cxx_constexpr = true}
 --
 function main(name, opt)
 
@@ -68,8 +74,8 @@ function main(name, opt)
         return result
     end
 
-    -- detect.tools.xxx.features(opt)?
-    local features = import("detect.tools." .. tool.name .. ".features", {try = true})
+    -- core.tools.xxx.features(opt)?
+    local features = import("core.tools." .. tool.name .. ".features", {try = true})
     if features then
         result = features(opt)
     end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,18 +20,19 @@
 
 -- define rule: utils.symbols.extract
 rule("utils.symbols.extract")
-    before_link(function(target)
-
-        -- imports
-        import("core.platform.platform")
+    after_config(function(target)
 
         -- need generate symbols?
         local strip = target:get("strip")
-        if target:get("symbols") == "debug" and (strip == "all" or strip == "debug")
+        local symbols = table.wrap(target:get("symbols"))
+        if table.contains(symbols, "debug") and (strip == "all" or strip == "debug")
+            and not target:is_plat("windows") -- we need not to strip pdb for windows, https://github.com/xmake-io/xmake/issues/6554
             and (target:is_binary() or target:is_shared()) and target:tool("strip") then -- only for strip command
             target:data_set("utils.symbols.extract", true)
             target:set("strip", "none") -- disable strip in link stage, because we need to run separate strip commands
             target:data_set("strip.origin", strip)
+        else
+            target:rule_enable("utils.symbols.extract", false)
         end
     end)
     after_link(function (target, opt)
@@ -102,7 +103,7 @@ rule("utils.symbols.extract")
 
             -- strip it
             local strip_argv = {}
-            if target:is_plat("macosx", "iphoneos", "watchos") then
+            if target:is_plat("macosx", "iphoneos", "watchos") and not strip:find("llvm-strip", 1, true) then
                 -- do not support `-s`, we can only strip debug symbols
                 local arch = target:arch()
                 if arch then

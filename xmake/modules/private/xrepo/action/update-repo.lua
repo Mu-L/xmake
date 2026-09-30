@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        update-repo.lua
@@ -25,10 +25,13 @@ import("core.base.option")
 function menu_options()
 
     -- description
-    local description = "Update all local repositories from remote."
+    local description = "Update the local repositories from remote."
 
     -- menu options
-    local options = {}
+    local options =
+    {
+        {nil, "name", "v", nil, "The repository name."}
+    }
 
     -- show menu options
     local function show_options()
@@ -67,10 +70,13 @@ function update_repository()
     if option.get("diagnosis") then
         table.insert(repo_argv, "-D")
     end
+    local name = option.get("name")
+    if name then
+        table.insert(repo_argv, name)
+    end
     os.vexecv(os.programfile(), repo_argv)
 end
 
--- main entry
 function main()
     update_repository()
 end

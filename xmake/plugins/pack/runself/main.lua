@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -108,28 +108,39 @@ end
 function _pack_runself(makeself, package)
 
     -- install the initial specfile
-    local specfile = package:specfile()
+    local specfile = path.join(package:builddir(), package:basename() .. ".lsm")
     if not os.isfile(specfile) then
-        local specfile_template = path.join(os.programdir(), "scripts", "xpack", "runself", "makeself.lsm")
-        os.cp(specfile_template, specfile)
+        local specfile_template = package:get("specfile") or path.join(os.programdir(), "scripts", "xpack", "runself", "makeself.lsm")
+        os.cp(specfile_template, specfile, {writeable = true})
     end
 
     -- replace variables in specfile
     local specvars = _get_specvars(package)
     local pattern = package:extraconf("specfile", "pattern") or "%${([^\n]-)}"
+    local specvars_names = {}
+    local specvars_values = {}
+    io.gsub(specfile, "(" .. pattern .. ")", function(_, name)
+        table.insert(specvars_names, name)
+    end)
+    for _, name in ipairs(specvars_names) do
+        local name = name:trim()
+        if specvars_values[name] == nil then
+            local value = specvars[name]
+            if type(value) == "function" then
+                value = value()
+            end
+            if value ~= nil then
+                dprint("  > replace %s -> %s", name, value)
+            end
+            if type(value) == "table" then
+                dprint("invalid variable value", value)
+            end
+            specvars_values[name] = value
+        end
+    end
     io.gsub(specfile, "(" .. pattern .. ")", function(_, name)
         name = name:trim()
-        local value = specvars[name]
-        if type(value) == "function" then
-            value = value()
-        end
-        if value ~= nil then
-            dprint("  > replace %s -> %s", name, value)
-        end
-        if type(value) == "table" then
-            dprint("invalid variable value", value)
-        end
-        return value
+        return specvars_values[name]
     end)
 
     -- archive source files

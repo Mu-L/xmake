@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,23 +20,32 @@
 
 rule("qt.moc")
     add_deps("qt.env")
-    add_deps("qt.ui", {order = true})
+    add_orders("qt.ui", "qt.moc")
     set_extensions(".h", ".hpp")
-    before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
 
-        -- imports
-        import("core.tool.compiler")
+    on_config(function (target)
+        import("lib.detect.find_file")
+
+        -- get qt
+        local qt = assert(target:data("qt"), "Qt not found!")
 
         -- get moc
-        local qt = assert(target:data("qt"), "Qt not found!")
-        local moc = path.join(qt.bindir, is_host("windows") and "moc.exe" or "moc")
-        if not os.isexec(moc) and qt.libexecdir then
-            moc = path.join(qt.libexecdir, is_host("windows") and "moc.exe" or "moc")
-        end
-        if not os.isexec(moc) and qt.libexecdir_host then
-            moc = path.join(qt.libexecdir_host, is_host("windows") and "moc.exe" or "moc")
-        end
+        local search_dirs = {}
+        if qt.bindir_host then table.insert(search_dirs, qt.bindir_host) end
+        if qt.bindir then table.insert(search_dirs, qt.bindir) end
+        if qt.libexecdir_host then table.insert(search_dirs, qt.libexecdir_host) end
+        if qt.libexecdir then table.insert(search_dirs, qt.libexecdir) end
+        local moc = find_file(is_host("windows") and "moc.exe" or "moc", search_dirs)
         assert(moc and os.isexec(moc), "moc not found!")
+
+        -- save moc
+        target:data_set("qt.moc", moc)
+    end)
+
+    before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
+        import("core.tool.compiler")
+
+        local moc = target:data("qt.moc")
 
         -- get c++ source file for moc
         --
@@ -71,7 +80,6 @@ rule("qt.moc")
         -- generate c++ source file for moc
         local flags = {}
         table.join2(flags, compiler.map_flags("cxx", "define", _get_values_from_target(target, "defines")))
-        table.join2(flags, compiler.map_flags("cxx", "runtime", _get_values_from_target(target, "runtimes")))
         local pathmaps = {
             {"includedirs", "includedir"},
             {"sysincludedirs", "includedir"}, -- for now, moc process doesn't support MSVC external includes flags and will fail
@@ -79,6 +87,7 @@ rule("qt.moc")
         }
         for _, pathmap in ipairs(pathmaps) do
             for _, item in ipairs(_get_values_from_target(target, pathmap[1])) do
+                local item = item
                 local pathitem = path(item, function (p)
                     local item = table.unwrap(compiler.map_flags("cxx", pathmap[2], p))
                     if item then
@@ -110,13 +119,15 @@ rule("qt.moc")
                     break
                 end
             end
+            batchcmds:set_depmtime(os.mtime(sourcefile_moc))
+            batchcmds:set_depcache(target:dependfile(sourcefile_moc))
         else
             -- compile c++ source file for moc
             batchcmds:compile(sourcefile_moc, objectfile)
+            batchcmds:set_depmtime(os.mtime(objectfile))
+            batchcmds:set_depcache(target:dependfile(objectfile))
         end
 
         -- add deps
         batchcmds:add_depfiles(sourcefile)
-        batchcmds:set_depmtime(os.mtime(objectfile))
-        batchcmds:set_depcache(target:dependfile(objectfile))
     end)

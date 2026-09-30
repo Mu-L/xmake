@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -238,7 +238,7 @@ function _install(sourcedir)
     if option.get("verbose") then
         install_task()
     else
-        runjobs("update/install", install_task, {progress = true})
+        runjobs("update/install", install_task, {waiting_indicator = true})
     end
 end
 
@@ -318,7 +318,7 @@ function _initialize_shell()
         local profile_fish = "$XMAKE_PROGRAM_DIR/scripts/profile-unix.fish"
         local bridge_command = format([[export XMAKE_ROOTDIR="%s"
 export XMAKE_PROGRAM_DIR="%s"
-export PATH="$XMAKE_ROOTDIR:$PATH"
+# export PATH="$XMAKE_ROOTDIR:$PATH"
 test $FISH_VERSION && test -f "%s" && source "%s" && exit 0
 test -f "%s" && source "%s"
 ]], path.directory(os.programfile()), os.programdir(), profile_fish, profile_fish, profile, profile)
@@ -339,7 +339,7 @@ test -f "%s" && source "%s"
                     file = file .. "\n"
                 end
             end
-            file = file .. "# >>> xmake >>>\n" .. command .. "\n# <<< xmake <<<"
+            file = file .. "# >>> xmake >>>\n" .. command .. "\n# <<< xmake <<<\n"
             io.writefile(target, file)
             return true
         end,
@@ -484,7 +484,7 @@ function main()
                             http.download(url, installerfile)
                         end
                     else
-                        git.clone(url, {depth = 1, recurse_submodules = not script_only, branch = version, outputdir = sourcedir})
+                        git.clone(url, {depth = 1, shallow_submodules = true, recurse_submodules = not script_only, branch = version, outputdir = sourcedir})
                     end
                     return true
                 end,
@@ -512,7 +512,7 @@ function main()
     if option.get("verbose") then
         download_task()
     else
-        runjobs("update/download", download_task, {progress = true})
+        runjobs("update/download", download_task, {waiting_indicator = true})
     end
 
     -- leave environment

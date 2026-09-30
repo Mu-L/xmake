@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        client.lua
@@ -25,6 +25,7 @@ import("core.base.socket")
 import("core.base.option")
 import("core.base.scheduler")
 import("core.project.policy")
+import("core.project.project")
 import("core.project.config", {alias = "project_config"})
 import("lib.detect.find_tool")
 import("private.service.client_config", {alias = "config"})
@@ -175,7 +176,7 @@ function distcc_build_client:maxjobs()
     if maxjobs == nil then
         maxjobs = 0
         for _, host in pairs(self:status().hosts) do
-            maxjobs = maxjobs + host.njob
+            maxjobs = maxjobs + (host.njob or 4)
         end
         self._MAXJOBS = maxjobs
     end
@@ -262,7 +263,7 @@ function distcc_build_client:compile(program, argv, opt)
         -- do distcc compilation
         if not cached then
             -- we just compile the large preprocessed file in remote
-            if os.filesize(cppinfo.cppfile) > 4096 and not session:is_unreachable() then
+            if (self:remote_only() or os.filesize(cppinfo.cppfile) > 4096) and not session:is_unreachable() then
                 local compile_fallback = opt.compile_fallback
                 if compile_fallback then
                     local ok = try
@@ -389,6 +390,11 @@ end
 -- get working directory
 function distcc_build_client:workdir()
     return self._WORKDIR
+end
+
+-- build on only remote machines
+function distcc_build_client:remote_only()
+    return project.policy("build.distcc.remote_only") == true
 end
 
 -- get free host
@@ -569,13 +575,15 @@ function distcc_build_client:_connect_host(host)
     end
 
     -- update status
-    local status = self:status()
-    status.hosts = status.hosts or {}
-    status.hosts[addr .. ":" .. port] = {
-        addr = addr, port = port, token = token,
-        connected = ok, session_id = session_id,
-        ncpu = ncpu, njob = host.njob or njob}
-    self:status_save()
+    if ok then
+        local status = self:status()
+        status.hosts = status.hosts or {}
+        status.hosts[addr .. ":" .. port] = {
+            addr = addr, port = port, token = token,
+            connected = ok, session_id = session_id,
+            ncpu = ncpu, njob = njob}
+        self:status_save()
+    end
 end
 
 -- disconnect from the host

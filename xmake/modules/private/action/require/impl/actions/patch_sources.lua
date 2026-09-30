@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        patch_sources.lua
@@ -80,6 +80,7 @@ function _patch(package, patchinfo)
         if patch_url:find(string.ipattern("https-://")) or patch_url:find(string.ipattern("ftps-://")) then
             http.download(patch_url, patch_file, {
                 insecure = global.get("insecure-ssl"),
+                insecure_fallback = true, -- retry without ssl verification on cert error, the file is verified by sha256 below
                 headers = package:policy("package.download.http_headers")})
         else
             -- copy the patch file
@@ -107,13 +108,27 @@ function _patch(package, patchinfo)
         local patchdir = patch_file .. ".dir"
         local patchdir_tmp = patchdir .. ".tmp"
         os.tryrm(patchdir_tmp)
-        if archive.extract(patch_file, patchdir_tmp) then
+        local errors
+        local ok = try {
+            function()
+                archive.extract(patch_file, patchdir_tmp)
+                return true
+            end,
+            catch {
+                function (errs)
+                    if errs then
+                        errors = tostring(errs)
+                    end
+                end
+            }
+        }
+        if ok then
             os.tryrm(patchdir)
             os.mv(patchdir_tmp, patchdir)
         else
             os.tryrm(patchdir_tmp)
             os.tryrm(patchdir)
-            raise("cannot extract %s", patch_file)
+            raise(errors or string.format("cannot extract %s", patch_file))
         end
 
         -- apply patch files
@@ -129,6 +144,14 @@ function _patch(package, patchinfo)
 end
 
 -- patch the given package
+-- patch the package sources
+--
+-- @param package  the package instance
+--
+-- patch the package sources
+--
+-- @param package  the package instance
+--
 function main(package)
 
     -- we don't need to patch it if we use the precompiled artifacts to install package

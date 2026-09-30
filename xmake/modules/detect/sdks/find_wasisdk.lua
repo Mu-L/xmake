@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      vkensou
 -- @file        find_wasisdk.lua
@@ -100,6 +100,5 @@ function main(sdkdir, opt)
     -- save to cache
     cacheinfo.sdk = sdk or false
     detectcache:set(key, cacheinfo)
-    detectcache:save()
     return sdk
 end

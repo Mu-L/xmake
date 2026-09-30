@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -24,8 +24,11 @@ import("core.base.hashset")
 import("core.project.config")
 import("core.project.project")
 import("lib.detect.find_tool")
+import("async.runjobs")
+import("utils.progress")
 import("private.action.require.impl.packagenv")
 import("private.action.require.impl.install_packages")
+import("private.action.utils", {alias = "action_utils"})
 
 -- match source files
 function _match_sourcefiles(sourcefile, filepatterns)
@@ -60,7 +63,7 @@ function _get_file_patterns(sourcefiles)
         if excludes then
             local _excludes = {}
             for _, exclude in ipairs(excludes) do
-                exclude = path.translate(exclude)
+                local exclude = path.translate(exclude)
                 exclude = path.pattern(exclude)
                 table.insert(_excludes, exclude)
             end
@@ -90,24 +93,19 @@ function _get_file_patterns(sourcefiles)
     return patterns
 end
 
--- get all the targets that match the group or targetname
-function _get_targets(targetname, group_pattern)
-    local targets = {}
-    if targetname then
-        table.insert(targets, project.target(targetname))
-    else
-        for _, target in pairs(project.targets()) do
-            local group = target:get("group")
-            if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
-                table.insert(targets, target)
-            end
-        end
-    end
-    return targets
+-- tell if the source batch is a c/c++/objc/objc++/cuda source batch
+function _source_batch_should_format(sourcebatch)
+    local rulename = sourcebatch.rulename
+    local matched_rules = {"c.build", "c++.build", "c++.build.modules", "cuda.build", "objc.build", "objc++.build"}
+    return table.contains(matched_rules, rulename)
 end
 
 -- main
 function main()
+
+    -- @note we cannot use utils.warning() here, it's queued and only shown at the end
+    cprint("${bright color.warning}${text.warning}: ${color.warning}the builtin `xmake format` plugin is deprecated, " ..
+           "please use the format-plugin addon: `xmake addon --install format-plugin`")
 
     -- load configuration
     config.load()
@@ -148,47 +146,78 @@ function main()
         table.insert(argv, "--style=" .. option.get("style"))
     end
 
-    -- inplace flag
-    table.insert(argv, "-i")
-
-    local targetname
-    local group_pattern = option.get("group")
-    if group_pattern then
-        group_pattern = "^" .. path.pattern(group_pattern) .. "$"
+    if option.get("dry-run") then
+        -- do not make any changes, just show the files that would be formatted
+        table.insert(argv, "--dry-run")
     else
-        targetname = option.get("target")
+        -- inplace flag
+        table.insert(argv, "-i")
     end
 
-    local targets = _get_targets(targetname, group_pattern)
+    -- changes formatting warnings to errors
+    if option.get("error") then
+        table.insert(argv, "--Werror")
+    end
+
+    -- print verbose information
+    if option.get("verbose") then
+        table.insert(argv, "--verbose")
+    end
+
+    -- collect sourcefiles
+    local sourcefiles = {}
+    local targetnames, group_pattern = action_utils.get_targets_and_group()
+    local targets = action_utils.get_targets(targetnames, {group_pattern = group_pattern})
     if option.get("files") then
         local filepatterns = _get_file_patterns(option.get("files"))
         for _, target in ipairs(targets) do
             for _, source in ipairs(target:sourcefiles()) do
                 if _match_sourcefiles(source, filepatterns) then
-                    table.insert(argv, path.join(projectdir, source))
+                    table.insert(sourcefiles, path.absolute(source, projectdir))
                 end
             end
             for _, header in ipairs(target:headerfiles()) do
                 if _match_sourcefiles(header, filepatterns) then
-                    table.insert(argv, path.join(projectdir, header))
+                    table.insert(sourcefiles, path.absolute(header, projectdir))
                 end
             end
         end
     else
         for _, target in ipairs(targets) do
-            for _, source in ipairs(target:sourcefiles()) do
-                table.insert(argv, path.join(projectdir, source))
+            for _, sourcebatch in pairs(target:sourcebatches()) do
+                if _source_batch_should_format(sourcebatch) then
+                    for _, source in ipairs(sourcebatch.sourcefiles) do
+                        table.insert(sourcefiles, path.absolute(source, projectdir))
+                    end
+                end
             end
             for _, header in ipairs(target:headerfiles()) do
-                table.insert(argv, path.join(projectdir, header))
+                table.insert(sourcefiles, path.absolute(header, projectdir))
             end
         end
     end
 
-    -- format files
-    os.vrunv(clang_format.program, argv, {curdir = projectdir})
-    cprint("${color.success}format ok!")
-
-    -- done
+    -- format files in parallel
+    if #sourcefiles > 0 then
+        local jobs = tonumber(option.get("jobs"))
+        if not jobs or jobs <= 0 then
+            jobs = os.default_njob()
+        end
+        local format_time = os.mclock()
+        local runjobs_opt = {
+            total = #sourcefiles,
+            comax = jobs,
+            showtips = false,
+            progress_refresh = true
+        }
+        runjobs("clang-format", function (index, total, opt)
+            local sourcefile = sourcefiles[index]
+            local format_argv = table.join(argv, {sourcefile})
+            progress.show(opt.progress, "clang-format.formatting %s", sourcefile)
+            os.execv(clang_format.program, format_argv, {curdir = projectdir})
+        end, runjobs_opt)
+        format_time = os.mclock() - format_time
+        progress.show(100, "${color.success}clang-format formatted %d files, spent %.3fs", #sourcefiles, format_time / 1000)
+    end
     os.setenvs(oldenvs)
 end

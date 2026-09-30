@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set_project "xmake"
-set_version "2.8.9" "%Y%m%d"
+set_version "3.1.1" "%Y%m%d"
 
 # set warning all
 set_warnings "all"
@@ -11,6 +11,12 @@ set_languages "c99"
 
 # add definitions
 add_defines "_GNU_SOURCE=1"  "_FILE_OFFSET_BITS=64"  "_LARGEFILE_SOURCE"
+
+# ensure POSIX/XOPEN features are available on Solaris (for setenv, unsetenv, clock_gettime, etc.)
+# _XOPEN_SOURCE=600 implicitly sets _POSIX_C_SOURCE=200112L
+if is_plat "solaris"; then
+    add_defines "_XOPEN_SOURCE=600"
+fi
 
 # disable some compiler errors
 if is_plat "macosx"; then
@@ -37,26 +43,51 @@ option "external" "Always use external dependencies" false
 
 # the readline option
 option "readline"
-    add_links "readline"
-    add_cincludes "readline/readline.h"
+    add_cincludes "stdio.h" "readline/readline.h"
     add_cfuncs "readline"
+    before_check "option_find_readline"
     add_defines "XM_CONFIG_API_HAVE_READLINE"
 option_end
+
+option_find_readline() {
+    option "readline"
+        if is_plat "mingw"; then
+            local termlib="-ltermcap"
+            if pkg-config --exists ncursesw 2>/dev/null; then
+                termlib="-lncursesw"
+            fi
+            add_ldflags "-Wl,-Bstatic" "-lreadline" "${termlib}" "-lpthread" "-Wl,-Bdynamic"
+        else
+            add_links "readline"
+        fi
+    option_end
+}
 
 # the curses option
 option "curses"
     add_cfuncs "initscr"
     add_cincludes "curses.h"
-    add_defines "XM_CONFIG_API_HAVE_CURSES"
     before_check "option_find_curses"
+    add_defines "XM_CONFIG_API_HAVE_CURSES"
+    if is_host "solaris"; then
+        set_default "false"
+    fi
 option_end
 
 option_find_curses() {
+    local ncurses="ncurses"
+    if is_plat "mingw"; then
+        ncurses="ncursesw"
+    fi
     local ncurses_ldflags=""
-    ncurses_ldflags=$(pkg-config --libs ncurses 2>/dev/null)
+    ncurses_ldflags=$(pkg-config --libs ${ncurses} 2>/dev/null)
     option "curses"
-        if test_nz "${ncurses_ldflags}"; then
-            add_cflags `pkg-config --cflags ncurses 2>/dev/null`
+        if is_plat "mingw"; then
+            add_defines "NCURSES_STATIC"
+            add_cflags `pkg-config --cflags ${ncurses} 2>/dev/null`
+            add_ldflags "-Wl,-Bstatic" "-lncursesw" "-lpthread" "-Wl,-Bdynamic"
+        elif test_nz "${ncurses_ldflags}"; then
+            add_cflags `pkg-config --cflags ${ncurses} 2>/dev/null`
             add_ldflags "${ncurses_ldflags}"
         else
             add_links "curses"
@@ -224,4 +255,4 @@ if ! has_config "external"; then
     includes "src/tbox"
 fi
 includes "src/xmake"
-includes "src/demo"
+includes "src/cli"

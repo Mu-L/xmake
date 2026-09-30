@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -57,7 +57,7 @@ end
 
 -- get archive file
 function _get_archivefile(package)
-    return path.absolute(path.join(package:buildir(), package:basename() .. ".tar.gz"))
+    return path.absolute(path.join(package:builddir(), package:basename() .. ".tar.gz"))
 end
 
 -- translate the file path
@@ -81,7 +81,7 @@ function _get_customcmd(package, installcmds, cmd)
                     dstfile = path.join(dstfile, path.filename(srcfile))
                 end
             end
-            table.insert(installcmds, string.format("install -Dpm0644 \"%s\" \"%s\"", srcfile, dstfile))
+            table.insert(installcmds, string.format("install -Dpm0644 \"%s\" \"%s\"", path.absolute(srcfile), dstfile))
         end
     elseif kind == "rm" then
         local filepath = _translate_filepath(package, cmd.filepath)
@@ -102,6 +102,7 @@ function _get_customcmd(package, installcmds, cmd)
     elseif cmd.program then
         local argv = {}
         for _, arg in ipairs(cmd.argv) do
+            local arg = arg
             if path.instance_of(arg) then
                 arg = arg:clone():set(_translate_filepath(package, arg:rawstr())):str()
             elseif path.is_absolute(arg) then
@@ -202,28 +203,40 @@ function _pack_srpm(rpmbuild, package)
     end
 
     -- install the initial specfile
-    local specfile = package:specfile()
+    local specfile = path.join(package:builddir(), package:basename() .. ".spec")
     if not os.isfile(specfile) then
-        local specfile_template = path.join(os.programdir(), "scripts", "xpack", "srpm", "srpm.spec")
-        os.cp(specfile_template, specfile)
+        local specfile_template = package:get("specfile") or path.join(os.programdir(), "scripts", "xpack", "srpm", "srpm.spec")
+        os.cp(specfile_template, specfile, {writeable = true})
     end
 
     -- replace variables in specfile
+    -- and we need to avoid `attempt to yield across a C-call boundary` in io.gsub
     local specvars = _get_specvars(package)
     local pattern = package:extraconf("specfile", "pattern") or "%${([^\n]-)}"
+    local specvars_names = {}
+    local specvars_values = {}
+    io.gsub(specfile, "(" .. pattern .. ")", function(_, name)
+        table.insert(specvars_names, name)
+    end)
+    for _, name in ipairs(specvars_names) do
+        local name = name:trim()
+        if specvars_values[name] == nil then
+            local value = specvars[name]
+            if type(value) == "function" then
+                value = value()
+            end
+            if value ~= nil then
+                dprint("  > replace %s -> %s", name, value)
+            end
+            if type(value) == "table" then
+                dprint("invalid variable value", value)
+            end
+            specvars_values[name] = value
+        end
+    end
     io.gsub(specfile, "(" .. pattern .. ")", function(_, name)
         name = name:trim()
-        local value = specvars[name]
-        if type(value) == "function" then
-            value = value()
-        end
-        if value ~= nil then
-            dprint("  > replace %s -> %s", name, value)
-        end
-        if type(value) == "table" then
-            dprint("invalid variable value", value)
-        end
-        return value
+        return specvars_values[name]
     end)
 
     -- archive source files
@@ -251,8 +264,8 @@ function _pack_srpm(rpmbuild, package)
 
     -- pack srpm package
     os.vrunv(rpmbuild, {"-bs", specfile,
-        "--define", "_topdir " .. package:buildir(),
-        "--define", "_sourcedir " .. package:buildir(),
+        "--define", "_topdir " .. package:builddir(),
+        "--define", "_sourcedir " .. package:builddir(),
         "--define", "_srcrpmdir " .. package:outputdir()})
 
     -- pack rpm package

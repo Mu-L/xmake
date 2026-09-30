@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        load.lua
@@ -21,70 +21,59 @@
 -- imports
 import("core.base.option")
 import("core.project.config")
-import("detect.sdks.find_vstudio")
-
--- add the given vs environment
-function _add_vsenv(toolchain, name, curenvs)
-
-    -- get vcvars
-    local vcvars = toolchain:config("vcvars")
-    if not vcvars then
-        return
-    end
-
-    -- get the paths for the vs environment
-    local new = vcvars[name]
-    if new then
-        -- fix case naming conflict for cmake/msbuild between the new msvc envs and current environment, if we are running xmake in vs prompt.
-        -- @see https://github.com/xmake-io/xmake/issues/4751
-        for k, c in pairs(curenvs) do
-            if name:lower() == k:lower() and name ~= k then
-                name = k
-                break
-            end
-        end
-        toolchain:add("runenvs", name, table.unwrap(path.splitenv(new)))
-    end
-end
+import("core.project.project")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- main entry
 function main(toolchain)
 
     -- set toolset
-    toolchain:set("toolset", "cc",  "clang-cl.exe")
-    toolchain:set("toolset", "cxx", "clang-cl.exe")
-    toolchain:set("toolset", "mrc", "rc.exe")
-    if toolchain:is_arch("x64") then
-        toolchain:set("toolset", "as",  "ml64.exe")
+    -- we can use `clang-cl[llvm]` to switch to llvm tools.
+    local use_llvm = toolchain:config("llvm")
+    toolchain:set("toolset", "cc",      "clang-cl")
+    toolchain:set("toolset", "cxx",     "clang-cl")
+    toolchain:set("toolset", "dlltool", "llvm-dlltool")
+    if use_llvm then
+        toolchain:set("toolset", "mrc", "llvm-rc.exe")
+        if toolchain:is_arch("x64") then
+            toolchain:set("toolset", "as",  "llvm-ml64.exe")
+        else
+            toolchain:set("toolset", "as",  "llvm-ml.exe")
+        end
     else
-        toolchain:set("toolset", "as",  "ml.exe")
-    end
-    toolchain:set("toolset", "ld",  "link.exe")
-    toolchain:set("toolset", "sh",  "link.exe")
-    toolchain:set("toolset", "ar",  "link.exe")
-
-    -- add vs environments
-    local expect_vars = {"PATH", "LIB", "INCLUDE", "LIBPATH"}
-    local curenvs = os.getenvs()
-    for _, name in ipairs(expect_vars) do
-        _add_vsenv(toolchain, name, curenvs)
-    end
-    for _, name in ipairs(find_vstudio.get_vcvars()) do
-        if not table.contains(expect_vars, name:upper()) then
-            _add_vsenv(toolchain, name, curenvs)
+        toolchain:set("toolset", "mrc",     "rc.exe")
+        if toolchain:is_arch("x64") then
+            toolchain:set("toolset", "as",  "ml64.exe")
+        else
+            toolchain:set("toolset", "as",  "ml.exe")
         end
     end
 
-    local march
-    if toolchain:is_arch("x86_64", "x64") then
-        march = "-m64"
-    elseif toolchain:is_arch("i386", "x86") then
-        march = "-m32"
+    if use_llvm or project.policy("build.optimization.lto") then
+        toolchain:set("toolset", "ld",  "lld-link")
+        toolchain:set("toolset", "sh",  "lld-link")
+        toolchain:set("toolset", "ar",  "llvm-ar")
+    else
+        toolchain:set("toolset", "ld",  "link.exe")
+        toolchain:set("toolset", "sh",  "link.exe")
+        toolchain:set("toolset", "ar",  "link.exe")
     end
-    if march then
-        toolchain:add("cxflags", march)
-        toolchain:add("mxflags", march)
-        toolchain:add("asflags", march)
+
+    -- add llvm runenvs before adding vsenvs
+    --
+    -- The dynamic libraries (DLLs) for Clang ASan and MSVC ASan share the same filename, making them incompatible.
+    -- Currently, runenvs maybe have Visual Studio environment variables.
+    -- If the Clang path is not prioritized (placed first), the system incorrectly loads the MSVC ASan DLL, resulting in a runtime failure.
+    toolchain_utils.add_llvm_runenvs(toolchain)
+
+    -- add vs environments
+    toolchain_utils.add_vsenvs(toolchain)
+
+    -- add target flags
+    local flags = toolchain_utils.get_clang_target_flags(toolchain)
+    if flags then
+        toolchain:add("cxflags", flags)
+        toolchain:add("mxflags", flags)
     end
 end
 

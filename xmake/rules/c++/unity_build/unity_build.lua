@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        unity_build.lua
@@ -32,11 +32,11 @@ function _merge_unityfile(target, sourcefile_unity, sourcefiles, opt)
         local uniqueid = target:data("unity_build.uniqueid")
         local unityfile = io.open(sourcefile_unity, "w")
         for _, sourcefile in ipairs(sourcefiles) do
-            sourcefile = path.absolute(sourcefile)
+            local sourcefile = path.absolute(sourcefile)
             sourcefile_unity = path.absolute(sourcefile_unity)
             sourcefile = path.relative(sourcefile, path.directory(sourcefile_unity))
             if uniqueid then
-                unityfile:print("#define %s %s", uniqueid, "unity_" .. hash.uuid():split("-", {plain = true})[1])
+                unityfile:print("#define %s %s", uniqueid, "unity_" .. hash.rand64())
             end
             unityfile:print("#include \"%s\"", sourcefile)
             if uniqueid then

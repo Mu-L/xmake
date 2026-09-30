@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      wsw0108
 -- @file        xmake.lua
@@ -47,7 +47,6 @@ toolchain("wasi")
         if wasisdk then
             toolchain:config_set("bindir", wasisdk.bindir)
             toolchain:config_set("sdkdir", wasisdk.sdkdir)
-            toolchain:configs_save()
             return wasisdk
         end
         return import("lib.detect.find_tool")("clang", {paths = toolchain:bindir()})

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,6 +20,7 @@
 
 rule("linker.soname")
     on_config(function (target)
+        local enabled = false
         local soname = target:soname()
         if target:is_shared() and soname then
             if target:has_tool("sh", "gcc", "gxx", "clang", "clangxx") then
@@ -28,15 +29,18 @@ rule("linker.soname")
                 else
                     target:add("shflags", "-Wl,-soname," .. soname, {force = true})
                 end
-                target:data_set("soname.enabled", true)
+                enabled = true
             end
+        end
+        if not enabled then
+            target:rule_enable("linker.soname", false)
         end
     end)
 
     after_link(function (target)
         import("core.project.depend")
         local soname = target:soname()
-        if target:is_shared() and soname and target:data("soname.enabled") then
+        if target:is_shared() and soname then
             local version = target:version()
             local filename = target:filename()
             local extension = path.extension(filename)

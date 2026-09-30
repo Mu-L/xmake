@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        repository.lua
@@ -38,7 +38,7 @@ function _get_packagedir_from_locked_repo(packagename, locked_repo)
             break
         end
     end
-    local reponame = hash.uuid(locked_repo.url):gsub("%-", ""):lower() .. ".lock"
+    local reponame = hash.strhash128(locked_repo.url .. (locked_repo.commit or "")) .. ".lock"
 
     -- get local repodir
     local repodir_local
@@ -60,7 +60,7 @@ function _get_packagedir_from_locked_repo(packagename, locked_repo)
     local lastcommit
     if not os.isdir(repodir_local) then
         if repo_global then
-            git.clone(repo_global:directory(), {verbose = option.get("verbose"), outputdir = repodir_local, autocrlf = false})
+            git.clone(repo_global:directory(), {treeless = true, checkout = false, verbose = option.get("verbose"), outputdir = repodir_local, autocrlf = false})
             lastcommit = repo_global:commit()
         elseif network ~= "private" then
             local remoteurl = proxy.mirror(locked_repo.url) or locked_repo.url
@@ -84,6 +84,7 @@ function _get_packagedir_from_locked_repo(packagename, locked_repo)
                 if network ~= "private" then
                     -- pull the latest commit
                     local remoteurl = proxy.mirror(locked_repo.url) or locked_repo.url
+                    git.reset({verbose = option.get("verbose"), repodir = repodir_local, hard = true})
                     git.pull({verbose = option.get("verbose"), remote = remoteurl, branch = locked_repo.branch, repodir = repodir_local, force = true})
                     -- re-checkout to the given commit
                     ok = try {function () git.checkout(locked_repo.commit, {verbose = option.get("verbose"), repodir = repodir_local}); return true end}
@@ -116,7 +117,7 @@ function repositories()
         return _g._REPOSITORIES
     end
     -- get all repositories (local first)
-    local repos = table.join(repository.repositories(false), repository.repositories(true))
+    local repos = table.join(repository.repositories({global = false}), repository.repositories({global = true}))
     _g._REPOSITORIES = repos
     return repos
 end
@@ -150,9 +151,12 @@ function pulled()
 end
 
 -- get package directory from repositories
+--
+-- @param packagename the package name
+-- @param opt         {rootdir = "packages|addons|plugins"}
 function packagedir(packagename, opt)
 
-    -- strip trailng ~tag, e.g. zlib~debug
+    -- strip trailing ~tag, e.g. zlib~debug
     opt = opt or {}
     packagename = packagename:lower()
     if packagename:find('~', 1, true) then
@@ -161,7 +165,8 @@ function packagedir(packagename, opt)
 
     -- get cache key
     local reponame = opt.name
-    local cachekey = packagename
+    local rootdir = opt.rootdir or "packages"
+    local cachekey = rootdir .. "/" .. packagename
     local locked_repo = opt.locked_repo
     if locked_repo then
         cachekey = cachekey .. locked_repo.url .. (locked_repo.commit or "") .. (locked_repo.branch or "")
@@ -184,7 +189,7 @@ function packagedir(packagename, opt)
         -- find the package directory from repositories
         if not foundir then
             for _, repo in ipairs(repositories()) do
-                local dir = path.join(repo:directory(), "packages", packagename:sub(1, 1), packagename)
+                local dir = path.join(repo:directory(), rootdir, packagename:sub(1, 1), packagename)
                 if os.isdir(dir) and os.isfile(path.join(dir, "xmake.lua")) and (not reponame or reponame == repo:name()) then
                     foundir = {dir, repo}
                     break
@@ -219,26 +224,3 @@ function artifacts_manifest(packagename, version)
         end
     end
 end
-
--- search package directories from repositories
-function searchdirs(name)
-
-    -- find the package directories from all repositories
-    local unique = {}
-    local packageinfos = {}
-    for _, repo in ipairs(repositories()) do
-        for _, file in ipairs(os.files(path.join(repo:directory(), "packages", "*", string.ipattern("*" .. name .. "*"), "xmake.lua"))) do
-            local dir = path.directory(file)
-            local subdirname = path.basename(path.directory(dir))
-            if #subdirname == 1 then -- ignore l/luajit/port/xmake.lua
-                local packagename = path.filename(dir)
-                if not unique[packagename] then
-                    table.insert(packageinfos, {name = packagename, repo = repo, packagedir = path.directory(file)})
-                    unique[packagename] = true
-                end
-            end
-        end
-    end
-    return packageinfos
-end
-

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -81,11 +81,6 @@ function _get_makensis()
     return makensis, oldenvs
 end
 
--- get unique tag
-function _get_unique_tag(content)
-    return hash.uuid(content):split("-", {plain = true})[1]:lower()
-end
-
 -- translate the file path
 function _translate_filepath(package, filepath)
     return filepath:replace(package:install_rootdir(), "$InstDir", {plain = true})
@@ -98,22 +93,41 @@ function _get_command_strings(package, cmd, opt)
     local kind = cmd.kind
     if kind == "cp" then
         -- https://nsis.sourceforge.io/Reference/File
-        local srcfiles = os.files(cmd.srcpath)
-        for _, srcfile in ipairs(srcfiles) do
-            -- the destination is directory? append the filename
-            local dstfile = _translate_filepath(package, cmd.dstpath)
-            if #srcfiles > 1 or path.islastsep(dstfile) then
+        local srcpath = cmd.srcpath
+        local dstpath = _translate_filepath(package, cmd.dstpath)
+
+        -- match files and directories
+        local srcitems = os.filedirs(srcpath)
+        for _, srcitem in ipairs(srcitems) do
+            local srcitem = srcitem
+            if os.isdir(srcitem) then
+                -- copy directory recursively
+                srcitem = path.normalize(srcitem)
+                local dstdir = dstpath
                 if opt.rootdir then
-                    dstfile = path.join(dstfile, path.relative(srcfile, opt.rootdir))
+                    dstdir = path.join(dstdir, path.relative(srcitem, opt.rootdir))
                 else
-                    dstfile = path.join(dstfile, path.filename(srcfile))
+                    dstdir = path.join(dstdir, path.filename(srcitem))
                 end
+                dstdir = path.normalize(dstdir)
+                table.insert(result, string.format("SetOutPath \"%s\"", dstdir))
+                table.insert(result, string.format("File /r \"%s\\*\"", srcitem))
+            else
+                -- copy file
+                local dstfile = dstpath
+                if #srcitems > 1 or path.islastsep(dstfile) then
+                    if opt.rootdir then
+                        dstfile = path.join(dstfile, path.relative(srcitem, opt.rootdir))
+                    else
+                        dstfile = path.join(dstfile, path.filename(srcitem))
+                    end
+                end
+                srcitem = path.normalize(srcitem)
+                local dstname = path.filename(dstfile)
+                local dstdir = path.normalize(path.directory(dstfile))
+                table.insert(result, string.format("SetOutPath \"%s\"", dstdir))
+                table.insert(result, string.format("File \"/oname=%s\" \"%s\"", dstname, srcitem))
             end
-            srcfile = path.normalize(srcfile)
-            local dstname = path.filename(dstfile)
-            local dstdir = path.normalize(path.directory(dstfile))
-            table.insert(result, string.format("SetOutPath \"%s\"", dstdir))
-            table.insert(result, string.format("File /oname=%s \"%s\"", dstname, srcfile))
         end
     elseif kind == "rm" then
         local filepath = _translate_filepath(package, cmd.filepath)
@@ -201,6 +215,10 @@ function _get_specvars(package)
     specvars.PACKAGE_WORKDIR = path.absolute(os.projectdir())
     specvars.PACKAGE_BINDIR = _translate_filepath(package, package:bindir())
     specvars.PACKAGE_OUTPUTFILE = path.absolute(package:outputfile())
+    if specvars.PACKAGE_VERSION_BUILD then
+        -- @see https://github.com/xmake-io/xmake/issues/5306
+        specvars.PACKAGE_VERSION_BUILD = specvars.PACKAGE_VERSION_BUILD:gsub(" ", "_")
+    end
     specvars.PACKAGE_INSTALLCMDS = function ()
         return _get_installcmds(package)
     end
@@ -229,7 +247,7 @@ function _get_specvars(package)
             table.insert(install_sections, string.format('Section%s "%s" %s', component:get("default") == false and " /o" or "", component:title(), tag))
             table.insert(install_sections, installcmds)
             table.insert(install_sections, "SectionEnd")
-            table.insert(install_descs, string.format('LangString DESC_%s ${LANG_ENGLISH} "%s"', tag, description))
+            table.insert(install_descs, string.format('LangString DESC_%s ${LANG_ENGLISH} "%s"', tag, component:description() or ""))
             table.insert(install_description_texts, string.format('!insertmacro MUI_DESCRIPTION_TEXT ${%s} $(DESC_%s)', tag, tag))
         end
         local uninstallcmds = _get_component_uninstallcmds(component)
@@ -250,29 +268,41 @@ end
 function _pack_nsis(makensis, package)
 
     -- install the initial specfile
-    local specfile = package:specfile()
+    local specfile = path.join(package:builddir(), package:basename() .. ".nsi")
     if not os.isfile(specfile) then
-        local specfile_template = path.join(os.programdir(), "scripts", "xpack", "nsis", "makensis.nsi")
+        local specfile_template = package:get("specfile") or path.join(os.programdir(), "scripts", "xpack", "nsis", "makensis.nsi")
         os.cp(specfile_template, specfile)
     end
 
-    -- replace variables in specfile
+    -- replace variables in specfile,
+    -- and we need to avoid `attempt to yield across a C-call boundary` in io.gsub
     local specvars = _get_specvars(package)
     local pattern = package:extraconf("specfile", "pattern") or "%${([^\n]-)}"
+    local specvars_names = {}
+    local specvars_values = {}
+    io.gsub(specfile, "(" .. pattern .. ")", function(_, name)
+        table.insert(specvars_names, name)
+    end, {encoding = "ansi"})
+    for _, name in ipairs(specvars_names) do
+        local name = name:trim()
+        if specvars_values[name] == nil then
+            local value = specvars[name]
+            if type(value) == "function" then
+                value = value()
+            end
+            if value ~= nil then
+                dprint("  > replace %s -> %s", name, value)
+            end
+            if type(value) == "table" then
+                dprint("invalid variable value", value)
+            end
+            specvars_values[name] = value
+        end
+    end
     io.gsub(specfile, "(" .. pattern .. ")", function(_, name)
         name = name:trim()
-        local value = specvars[name]
-        if type(value) == "function" then
-            value = value()
-        end
-        if value ~= nil then
-            dprint("  > replace %s -> %s", name, value)
-        end
-        if type(value) == "table" then
-            dprint("invalid variable value", value)
-        end
-        return value
-    end)
+        return specvars_values[name]
+    end, {encoding = "ansi"})
 
     -- make package
     os.vrunv(makensis, {specfile})
